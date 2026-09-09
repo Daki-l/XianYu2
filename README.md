@@ -206,8 +206,8 @@ flowchart LR
 每个正式 Release 会自动发布 `linux/amd64` 镜像到 GitHub Container Registry。固定版本适合生产部署，`latest` 适合体验最新正式版本。
 
 ```bash
-docker pull ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
-docker pull ghcr.io/evvvvvvvan/xianyusmart:latest
+docker pull ghcr.io/daki-l/xianyu2:v2.0.7
+docker pull ghcr.io/daki-l/xianyu2:latest
 ```
 
 使用仓库内的 Docker Compose 启动固定版本：
@@ -217,7 +217,7 @@ Linux：
 ```bash
 cp .env.example .env
 # 修改 .env 中的数据库密码和 JWT 强密钥
-export APP_IMAGE=ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
+export APP_IMAGE=ghcr.io/daki-l/xianyu2:v2.0.7
 docker compose pull app
 docker compose up -d --no-build
 ```
@@ -227,7 +227,7 @@ Windows PowerShell：
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-$env:APP_IMAGE = 'ghcr.io/evvvvvvvan/xianyusmart:v2.0.7'
+$env:APP_IMAGE = 'ghcr.io/daki-l/xianyu2:v2.0.7'
 docker compose pull app
 docker compose up -d --no-build
 ```

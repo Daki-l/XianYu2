@@ -206,8 +206,8 @@ flowchart LR
 Every official Release automatically publishes a `linux/amd64` image to GitHub Container Registry. Fixed versions are suitable for production deployment, while `latest` is intended for trying the latest official release.
 
 ```bash
-docker pull ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
-docker pull ghcr.io/evvvvvvvan/xianyusmart:latest
+docker pull ghcr.io/daki-l/xianyu2:v2.0.7
+docker pull ghcr.io/daki-l/xianyu2:latest
 ```
 
 Start a fixed version using the repository's Docker Compose configuration:
@@ -217,7 +217,7 @@ Linux:
 ```bash
 cp .env.example .env
 # Update the database password and strong JWT secret in .env
-export APP_IMAGE=ghcr.io/evvvvvvvan/xianyusmart:v2.0.7
+export APP_IMAGE=ghcr.io/daki-l/xianyu2:v2.0.7
 docker compose pull app
 docker compose up -d --no-build
 ```
@@ -227,7 +227,7 @@ Windows PowerShell:
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-$env:APP_IMAGE = 'ghcr.io/evvvvvvvan/xianyusmart:v2.0.7'
+$env:APP_IMAGE = 'ghcr.io/daki-l/xianyu2:v2.0.7'
 docker compose pull app
 docker compose up -d --no-build
 ```
