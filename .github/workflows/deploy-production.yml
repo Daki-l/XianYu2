@@ -71,11 +71,12 @@ jobs:
       - name: Configure SSH
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICjIQVjmk8M0j5fyR6OwycJy3lyVPhbNWTuy/tACpybh
         run: |
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          printf '%s %s\n' "$SERVER_HOST" "$SSH_HOST_KEY" > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
 
       - name: Deploy image digest
