@@ -36,6 +36,10 @@ public class AuthInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+
         // 非Controller方法直接放行
         if (!(handler instanceof HandlerMethod handlerMethod)) {
             return true;

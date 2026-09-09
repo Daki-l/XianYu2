@@ -41,6 +41,10 @@ public class AccessControlInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+
         SysUser currentUser = (SysUser) request.getAttribute("currentUser");
         String uri = request.getRequestURI().toLowerCase();
         boolean isAdmin = currentUser != null
