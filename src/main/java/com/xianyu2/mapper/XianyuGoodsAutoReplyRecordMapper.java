@@ -20,13 +20,17 @@ public interface XianyuGoodsAutoReplyRecordMapper {
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(XianyuGoodsAutoReplyRecord record);
     
-    /**
-     * 更新记录状态和回复内容
-     */
     @Update("UPDATE xianyu_goods_auto_reply_record SET state = #{state}, reply_content = #{replyContent}, " +
-            "lease_owner = NULL, lease_expire_time = NULL, " +
-            "exception_revision = exception_revision + IF(#{state} = -1, 1, 0) WHERE id = #{id}")
-    int updateStateAndContent(@Param("id") Long id, @Param("state") Integer state, @Param("replyContent") String replyContent);
+            "status_time = NOW(3), lease_owner = NULL, lease_expire_time = NULL " +
+            "WHERE id = #{id} AND state = 2")
+    int completeClaimed(@Param("id") Long id, @Param("state") Integer state, @Param("replyContent") String replyContent);
+
+    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -1, reply_content = NULL, status_time = NOW(3), " +
+            "last_error_code = #{errorCode}, last_error_message = #{errorMessage}, " +
+            "lease_owner = NULL, lease_expire_time = NULL, exception_revision = exception_revision + 1 " +
+            "WHERE id = #{id} AND state IN (0, 2)")
+    int failActive(@Param("id") Long id, @Param("errorCode") String errorCode,
+                   @Param("errorMessage") String errorMessage);
     
     /**
      * 更新触发上下文
@@ -50,21 +54,39 @@ public interface XianyuGoodsAutoReplyRecordMapper {
     XianyuGoodsAutoReplyRecord selectById(@Param("id") Long id);
 
     @Select("SELECT * FROM xianyu_goods_auto_reply_record WHERE " +
-            "(state = 0 AND scheduled_time <= NOW(3) AND (next_retry_time IS NULL OR next_retry_time <= NOW(3))) " +
-            "OR (state = 2 AND lease_expire_time < NOW(3)) ORDER BY scheduled_time ASC LIMIT #{limit}")
+            "state = 0 AND scheduled_time <= NOW(3) AND (next_retry_time IS NULL OR next_retry_time <= NOW(3)) " +
+            "ORDER BY scheduled_time ASC LIMIT #{limit}")
     List<XianyuGoodsAutoReplyRecord> findDue(@Param("limit") int limit);
 
     @Update("UPDATE xianyu_goods_auto_reply_record SET state = 2, lease_owner = #{workerId}, " +
-            "lease_expire_time = DATE_ADD(NOW(3), INTERVAL #{leaseSeconds} SECOND), attempt_count = attempt_count + 1 " +
-            "WHERE id = #{id} AND (state = 0 OR (state = 2 AND lease_expire_time < NOW(3)))")
+            "lease_expire_time = DATE_ADD(NOW(3), INTERVAL #{leaseSeconds} SECOND), status_time = NOW(3), " +
+            "attempt_count = attempt_count + 1 WHERE id = #{id} AND state = 0")
     int claim(@Param("id") Long id, @Param("workerId") String workerId, @Param("leaseSeconds") int leaseSeconds);
 
-    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, lease_owner = NULL, lease_expire_time = NULL " +
+    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, status_time = NOW(3), lease_owner = NULL, lease_expire_time = NULL " +
             "WHERE xianyu_account_id = #{accountId} AND s_id = #{sId} AND state = 0")
     int cancelPendingBySession(@Param("accountId") Long accountId, @Param("sId") String sId);
 
-    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, lease_owner = NULL, lease_expire_time = NULL WHERE id = #{id} AND state IN (0, 2)")
+    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, status_time = NOW(3), lease_owner = NULL, lease_expire_time = NULL WHERE id = #{id} AND state IN (0, 2)")
     int cancelById(@Param("id") Long id);
+
+    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, status_time = NOW(3), " +
+            "last_error_code = 'SERVICE_RESTART', last_error_message = '服务重启，AI回复已取消', " +
+            "lease_owner = NULL, lease_expire_time = NULL WHERE state IN (0, 2)")
+    int cancelUnfinishedOnStartup();
+
+    @Select("SELECT COUNT(*) > 0 FROM xianyu_goods_auto_reply_record WHERE id = #{id} AND state = 2")
+    boolean isProcessing(@Param("id") Long id);
+
+    @Select("SELECT * FROM (" +
+            "SELECT * FROM xianyu_goods_auto_reply_record WHERE xianyu_account_id = #{accountId} " +
+            "AND s_id = #{sId} AND state IN (0, 2) " +
+            "UNION ALL " +
+            "SELECT * FROM (SELECT * FROM xianyu_goods_auto_reply_record WHERE xianyu_account_id = #{accountId} " +
+            "AND s_id = #{sId} AND state IN (-1, -2) ORDER BY status_time DESC, id DESC LIMIT 20) terminal_states" +
+            ") timeline_states ORDER BY status_time ASC, id ASC")
+    List<XianyuGoodsAutoReplyRecord> findTimelineStates(@Param("accountId") Long accountId,
+                                                         @Param("sId") String sId);
 
     @Select("SELECT COUNT(*) FROM xianyu_goods_auto_reply_record WHERE state IN (0, 2)")
     int countPending();

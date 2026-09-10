@@ -43,6 +43,7 @@ const sending = ref(false)
 const refreshing = ref(false)
 const quickReplies = ref<string[]>([])
 const messagesRef = ref<HTMLElement>()
+const now = ref(Date.now())
 
 const normalizeImageUrl = (value?: string) => {
   if (!value) return ''
@@ -56,7 +57,33 @@ const markImageError = (url?: string) => {
 
 const imageAvailable = (url?: string) => Boolean(url && !failedImages.value.has(url))
 const isImageMessage = (message: ChatMessage) => [2, 887, 997].includes(message.contentType)
-const isSystemMessage = (message: ChatMessage) => ![1, 2, 887, 888, 997, 999].includes(message.contentType)
+const isTimelineStatus = (message: ChatMessage) => Boolean(message.timelineType && message.timelineType !== 'MESSAGE')
+const isSystemMessage = (message: ChatMessage) => isTimelineStatus(message) || ![1, 2, 887, 888, 997, 999].includes(message.contentType)
+const hasActiveAutoReply = computed(() => contextMessages.value.some(message =>
+  message.timelineType === 'AI_PENDING' || message.timelineType === 'AI_PROCESSING'
+))
+
+const statusLabel = (message: ChatMessage) => {
+  if (message.timelineType === 'AI_PENDING') return `AI 回复将在 ${countdown(message)} 后生成`
+  if (message.timelineType === 'AI_PROCESSING') return 'AI 回复生成中'
+  if (message.timelineType === 'AI_FAILED') return 'AI 回复失败'
+  if (message.timelineType === 'AI_CANCELLED') return 'AI 回复已取消'
+  return ''
+}
+
+const countdown = (message: ChatMessage) => {
+  if (!message.scheduledTime) return '稍后'
+  const timestamp = new Date(message.scheduledTime.replace(' ', 'T')).getTime()
+  if (Number.isNaN(timestamp)) return '稍后'
+  return `${Math.max(0, Math.ceil((timestamp - now.value) / 1000))} 秒`
+}
+
+const senderLabel = (message: ChatMessage) => {
+  if (message.senderUserId !== getCurrentAccountUnb.value) return message.senderUserName || selected.value?.buyerName || '买家'
+  if (message.replyOrigin === 'AI' || message.messageSource === 'LOCAL_AI') return '商家（AI回复）'
+  if (message.replyOrigin === 'BACKEND') return '商家（后台回复）'
+  return '商家（App回复）'
+}
 
 const conversations = computed(() => {
   const groups = new Map<string, ChatMessage[]>()
@@ -243,13 +270,22 @@ watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) =
 }, { immediate: true })
 
 let timer: ReturnType<typeof setInterval> | undefined
+let countdownTimer: ReturnType<typeof setInterval> | undefined
 onMounted(async () => {
   await loadAccounts()
-  timer = setInterval(refresh, 10000)
+  timer = setInterval(() => {
+    if (hasActiveAutoReply.value) {
+      void loadConversationContext(false, false)
+      return
+    }
+    void refresh()
+  }, 2000)
+  countdownTimer = setInterval(() => { now.value = Date.now() }, 1000)
 })
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  if (countdownTimer) clearInterval(countdownTimer)
 })
 </script>
 
@@ -306,10 +342,15 @@ onBeforeUnmount(() => {
 
           <div ref="messagesRef" class="chat__messages">
             <div v-if="contextLoading" class="chat__loading">正在读取完整会话…</div>
-            <template v-for="message in orderedContext" :key="message.id">
-              <article v-if="isSystemMessage(message)" class="chat__system">{{ message.msgContent }}</article>
+            <template v-for="message in orderedContext" :key="`${message.timelineType || 'MESSAGE'}-${message.id}`">
+              <article v-if="isTimelineStatus(message)" class="chat__timeline-status">
+                <span>{{ statusLabel(message) }}</span>
+                <p v-if="message.statusReason">{{ message.statusReason }}</p>
+                <time>{{ formatMessageTime(message.messageTime) }}</time>
+              </article>
+              <article v-else-if="isSystemMessage(message)" class="chat__system">{{ message.msgContent }}</article>
               <article v-else class="chat__message" :class="{ 'chat__message--mine': message.senderUserId === getCurrentAccountUnb }">
-                <span>{{ message.senderUserId === getCurrentAccountUnb ? '商家' : (message.senderUserName || selected.buyerName) }}</span>
+                <span>{{ senderLabel(message) }}</span>
                 <img v-if="isImageMessage(message) && imageAvailable(normalizeImageUrl(message.msgContent))" class="chat__message-image" :src="normalizeImageUrl(message.msgContent)" alt="会话图片" @error="markImageError(normalizeImageUrl(message.msgContent))">
                 <p v-else>{{ message.msgContent }}</p>
                 <time>{{ formatMessageTime(message.messageTime) }}</time>
@@ -392,6 +433,9 @@ onBeforeUnmount(() => {
 .chat__main-header span { overflow: hidden; color: #667085; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .chat__messages { display: flex; flex: 1; overflow-y: auto; flex-direction: column; gap: 10px; padding: 18px; }
 .chat__loading, .chat__system { align-self: center; padding: 5px 10px; border-radius: 12px; color: #667085; background: #f2f4f7; font-size: 11px; }
+.chat__timeline-status { align-self: center; max-width: 88%; padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 4px; color: #475467; background: #f8fafc; font-size: 12px; text-align: center; }
+.chat__timeline-status p { margin: 3px 0 0; color: #667085; }
+.chat__timeline-status time { display: block; margin-top: 3px; color: #98a2b3; font-size: 11px; }
 .chat__message { max-width: 72%; align-self: flex-start; }
 .chat__message span, .chat__message time { display: block; color: #98a2b3; font-size: 11px; }
 .chat__message p { margin: 4px 0; padding: 9px 12px; border-radius: 4px 10px 10px; background: #f2f4f7; line-height: 1.6; white-space: pre-wrap; }

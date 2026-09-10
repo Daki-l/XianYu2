@@ -174,9 +174,9 @@ public interface XianyuChatMessageMapper {
     @Select("SELECT * FROM xianyu_chat_message " +
             "WHERE xianyu_account_id = #{accountId} AND s_id = #{sid} " +
             "AND duplicate_status = 0 " +
-            "AND ((message_source = 'PLATFORM' AND content_type = 1) " +
-            "OR (message_source = 'LOCAL_AI' AND content_type = 888) " +
-            "OR (message_source = 'LOCAL' AND content_type = 999)) " +
+            "AND ((message_source = 'PLATFORM' AND content_type IN (1, 2)) " +
+            "OR (message_source = 'LOCAL_AI' AND content_type IN (888, 887)) " +
+            "OR (message_source = 'LOCAL' AND content_type IN (999, 997))) " +
             "ORDER BY message_time ASC, id ASC")
     List<XianyuChatMessage> findSessionCrossSourceMessages(@Param("accountId") Long accountId,
                                                             @Param("sid") String sid);
@@ -185,7 +185,7 @@ public interface XianyuChatMessageMapper {
             "WHERE id = #{duplicateId} AND duplicate_status = 0")
     int markDuplicate(@Param("duplicateId") Long duplicateId, @Param("canonicalId") Long canonicalId);
 
-    @Update("UPDATE xianyu_chat_message SET reply_origin = 'AI' " +
-            "WHERE id = #{messageId} AND content_type = 1")
-    int markAiReplyOrigin(@Param("messageId") Long messageId);
+    @Update("UPDATE xianyu_chat_message SET reply_origin = #{replyOrigin} " +
+            "WHERE id = #{messageId} AND content_type IN (1, 2)")
+    int markReplyOrigin(@Param("messageId") Long messageId, @Param("replyOrigin") String replyOrigin);
 }

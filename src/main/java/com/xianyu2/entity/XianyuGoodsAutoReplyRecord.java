@@ -86,6 +86,9 @@ public class XianyuGoodsAutoReplyRecord {
 
     private LocalDateTime scheduledTime;
 
+    /** The actual time at which the current task state was entered. */
+    private LocalDateTime statusTime;
+
     private Integer attemptCount;
 
     private LocalDateTime nextRetryTime;

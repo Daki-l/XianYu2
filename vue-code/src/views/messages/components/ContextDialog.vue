@@ -36,6 +36,8 @@ const showImageUploader = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
 const hasMore = ref(true)
 const loadingMore = ref(false)
+const realMessageCount = ref(0)
+const now = ref(Date.now())
 
 const isMobile = ref(false)
 const checkScreenSize = () => {
@@ -45,14 +47,19 @@ const checkScreenSize = () => {
 onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
+  countdownTimer = setInterval(() => { now.value = Date.now() }, 1000)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkScreenSize)
   stopRefresh()
+  if (countdownTimer) clearInterval(countdownTimer)
 })
 
 const totalCount = computed(() => messages.value.length)
+const hasActiveAutoReply = computed(() => messages.value.some(message =>
+  message.timelineType === 'AI_PENDING' || message.timelineType === 'AI_PROCESSING'
+))
 
 const handleClose = () => {
   emit('update:visible', false)
@@ -75,11 +82,12 @@ const loadContext = async (append = false) => {
     loading.value = true
     messages.value = []
     hasMore.value = true
+    realMessageCount.value = 0
   }
   
   try {
     const limit = 20
-    const offset = append ? messages.value.length : 0
+    const offset = append ? realMessageCount.value : 0
     
     if (!props.xianyuAccountId) return
     const res = await getContextMessages({
@@ -96,8 +104,9 @@ const loadContext = async (append = false) => {
     } else {
       messages.value = newMessages.reverse()
     }
-    
-    hasMore.value = newMessages.length >= limit
+    const realMessages = newMessages.filter(message => !message.timelineType || message.timelineType === 'MESSAGE')
+    realMessageCount.value = append ? realMessageCount.value + realMessages.length : realMessages.length
+    hasMore.value = realMessages.length >= limit
     
     if (!append) {
       scrollToBottom()
@@ -138,12 +147,17 @@ const loadMore = async () => {
 }
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+let countdownTimer: ReturnType<typeof setInterval> | null = null
+let lastActiveRefreshAt = 0
 
 const startRefresh = () => {
   stopRefresh()
   refreshTimer = setInterval(() => {
     if (props.visible && props.sid) {
-      refreshMessages()
+      if (!hasActiveAutoReply.value || Date.now() - lastActiveRefreshAt >= 2000) {
+        if (hasActiveAutoReply.value) lastActiveRefreshAt = Date.now()
+        refreshMessages()
+      }
     }
   }, 1000)
 }
@@ -166,6 +180,7 @@ const refreshMessages = async () => {
     const newMessages = Array.isArray(msgList) ? msgList.reverse() : []
     if (newMessages.length !== messages.value.length || JSON.stringify(newMessages) !== JSON.stringify(messages.value)) {
       messages.value = newMessages
+      realMessageCount.value = newMessages.filter(message => !message.timelineType || message.timelineType === 'MESSAGE').length
       scrollToBottom()
     }
   } catch {
@@ -197,10 +212,12 @@ const formatTime = (timestamp: string | number) => {
 }
 
 const isUserMessage = (msg: ChatMessage) => {
+  if (msg.timelineType && msg.timelineType !== 'MESSAGE') return false
   return msg.contentType === 1 && msg.senderUserId !== props.currentAccountUnb
 }
 
 const isMyMessage = (msg: ChatMessage) => {
+  if (msg.timelineType && msg.timelineType !== 'MESSAGE') return false
   if (msg.contentType === 999 || msg.contentType === 997 || msg.contentType === 888 || msg.contentType === 887) {
     return true
   }
@@ -212,11 +229,25 @@ const isSystemMessage = (msg: ChatMessage) => {
 }
 
 const getMessageType = (msg: ChatMessage) => {
+  if (msg.timelineType === 'AI_PENDING') return `AI 回复将在 ${countdown(msg)} 后生成`
+  if (msg.timelineType === 'AI_PROCESSING') return 'AI 回复生成中'
+  if (msg.timelineType === 'AI_FAILED') return 'AI 回复失败'
+  if (msg.timelineType === 'AI_CANCELLED') return 'AI 回复已取消'
+  if (msg.replyOrigin === 'AI' || msg.messageSource === 'LOCAL_AI') return 'AI回复'
+  if (msg.replyOrigin === 'BACKEND') return '后台回复'
+  if (msg.contentType === 1 && msg.senderUserId === props.currentAccountUnb) return 'App回复'
   if (msg.contentType === 999) return '手动回复'
   if (msg.contentType === 997) return '图片回复'
   if (msg.contentType === 888) return 'AI回复'
   if (msg.contentType === 887) return '自动回复图片'
   return null
+}
+
+const countdown = (msg: ChatMessage) => {
+  if (!msg.scheduledTime) return '稍后'
+  const timestamp = new Date(msg.scheduledTime.replace(' ', 'T')).getTime()
+  if (Number.isNaN(timestamp)) return '稍后'
+  return `${Math.max(0, Math.ceil((timestamp - now.value) / 1000))} 秒`
 }
 
 const handleSend = async () => {
@@ -316,7 +347,8 @@ const handleSend = async () => {
                     }"
                   >
                     <template v-if="isSystemMessage(msg)">
-                      <div class="system-text">{{ msg.msgContent.replace(/^\[|\]$/g, '') }}</div>
+                      <div class="system-text">{{ getMessageType(msg) || msg.msgContent.replace(/^\[|\]$/g, '') }}</div>
+                      <div v-if="msg.statusReason" class="system-text system-text--reason">{{ msg.statusReason }}</div>
                     </template>
                     
                     <template v-else>
@@ -328,7 +360,7 @@ const handleSend = async () => {
                       
                       <div class="message-body">
                         <div class="message-header">
-                          <span class="message-sender">{{ isUserMessage(msg) ? msg.senderUserName : '我' }}</span>
+                          <span class="message-sender">{{ isUserMessage(msg) ? msg.senderUserName : '商家' }}</span>
                           <span v-if="getMessageType(msg)" class="message-type">{{ getMessageType(msg) }}</span>
                           <span class="message-time">{{ formatTime(msg.messageTime) }}</span>
                         </div>

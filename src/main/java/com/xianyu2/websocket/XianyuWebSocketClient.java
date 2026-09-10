@@ -864,8 +864,8 @@ public class XianyuWebSocketClient extends WebSocketClient {
                 }
                 return success;
             } catch (java.util.concurrent.TimeoutException e) {
-                log.warn("【账号{}】消息发送超时(10秒)，视为发送成功: mid={}", accountId, mid);
-                return true;
+                log.warn("【账号{}】消息发送超时(10秒)，发送结果未知: mid={}", accountId, mid);
+                return false;
             } finally {
                 pendingResponses.remove(mid);
             }
@@ -1079,8 +1079,8 @@ public class XianyuWebSocketClient extends WebSocketClient {
                 }
                 return success;
             } catch (java.util.concurrent.TimeoutException e) {
-                log.warn("{}图片消息发送超时(10秒)，视为发送成功: mid={}", logPrefix(), mid);
-                return true;
+                log.warn("{}图片消息发送超时(10秒)，发送结果未知: mid={}", logPrefix(), mid);
+                return false;
             } finally {
                 pendingResponses.remove(mid);
             }

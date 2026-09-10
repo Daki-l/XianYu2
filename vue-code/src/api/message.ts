@@ -21,6 +21,10 @@ export interface ChatMessage {
   createTime: string;
   messageSource?: string;
   replyOrigin?: string;
+  timelineType?: 'MESSAGE' | 'AI_PENDING' | 'AI_PROCESSING' | 'AI_FAILED' | 'AI_CANCELLED';
+  autoReplyRecordId?: number;
+  scheduledTime?: string;
+  statusReason?: string;
   isNew?: boolean;
 }
 

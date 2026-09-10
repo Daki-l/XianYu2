@@ -3,8 +3,10 @@ package com.xianyu2.service.impl;
 import com.xianyu2.common.ResultObject;
 import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuChatMessage;
+import com.xianyu2.entity.XianyuGoodsAutoReplyRecord;
 import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuChatMessageMapper;
+import com.xianyu2.mapper.XianyuGoodsAutoReplyRecordMapper;
 import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.controller.dto.MsgListReqDTO;
@@ -19,6 +21,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -33,6 +38,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     
     @Autowired
     private XianyuChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private XianyuGoodsAutoReplyRecordMapper autoReplyRecordMapper;
 
     @Autowired
     private ChatMessagePersistenceService chatMessagePersistenceService;
@@ -101,19 +109,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             List<MsgDTO> msgDTOList = new ArrayList<>();
             if (messages != null) {
                 for (XianyuChatMessage message : messages) {
-                    MsgDTO msgDTO = new MsgDTO();
-                    msgDTO.setId(message.getId());
-                    msgDTO.setSId(message.getSId());
-                    msgDTO.setContentType(message.getContentType());
-                    msgDTO.setMsgContent(message.getMsgContent());
-                    msgDTO.setXyGoodsId(message.getXyGoodsId());
-                    msgDTO.setReminderUrl(message.getReminderUrl());
-                    msgDTO.setSenderUserName(message.getSenderUserName());
-                    msgDTO.setSenderUserId(message.getSenderUserId());
-                    msgDTO.setMessageTime(message.getMessageTime());
-                    msgDTO.setMessageSource(message.getMessageSource());
-                    msgDTO.setReplyOrigin(message.getReplyOrigin());
-                    msgDTOList.add(msgDTO);
+                    msgDTOList.add(toMessageDto(message));
                 }
             }
             
@@ -162,20 +158,17 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             List<MsgDTO> msgDTOList = new ArrayList<>();
             if (messages != null) {
                 for (XianyuChatMessage message : messages) {
-                    MsgDTO msgDTO = new MsgDTO();
-                    msgDTO.setId(message.getId());
-                    msgDTO.setSId(message.getSId());
-                    msgDTO.setContentType(message.getContentType());
-                    msgDTO.setMsgContent(message.getMsgContent());
-                    msgDTO.setXyGoodsId(message.getXyGoodsId());
-                    msgDTO.setReminderUrl(message.getReminderUrl());
-                    msgDTO.setSenderUserName(message.getSenderUserName());
-                    msgDTO.setSenderUserId(message.getSenderUserId());
-                    msgDTO.setMessageTime(message.getMessageTime());
-                    msgDTO.setMessageSource(message.getMessageSource());
-                    msgDTO.setReplyOrigin(message.getReplyOrigin());
-                    msgDTOList.add(msgDTO);
+                    msgDTOList.add(toMessageDto(message));
                 }
+            }
+
+            if (offset == 0) {
+                for (XianyuGoodsAutoReplyRecord record : autoReplyRecordMapper.findTimelineStates(
+                        reqDTO.getXianyuAccountId(), reqDTO.getSid())) {
+                    msgDTOList.add(toAutoReplyStatusDto(record));
+                }
+                msgDTOList.sort(Comparator.comparing(MsgDTO::getMessageTime,
+                        Comparator.nullsLast(Comparator.naturalOrder())).reversed());
             }
             
             return ResultObject.success(msgDTOList);
@@ -208,5 +201,68 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             saved++;
         }
         return ResultObject.success(java.util.Map.of("received", history.size(), "saved", saved));
+    }
+
+    private MsgDTO toMessageDto(XianyuChatMessage message) {
+        MsgDTO msgDTO = new MsgDTO();
+        msgDTO.setId(message.getId());
+        msgDTO.setSId(message.getSId());
+        msgDTO.setContentType(message.getContentType());
+        msgDTO.setMsgContent(message.getMsgContent());
+        msgDTO.setXyGoodsId(message.getXyGoodsId());
+        msgDTO.setReminderUrl(message.getReminderUrl());
+        msgDTO.setSenderUserName(message.getSenderUserName());
+        msgDTO.setSenderUserId(message.getSenderUserId());
+        msgDTO.setMessageTime(message.getMessageTime());
+        msgDTO.setMessageSource(message.getMessageSource());
+        msgDTO.setReplyOrigin(message.getReplyOrigin());
+        msgDTO.setTimelineType("MESSAGE");
+        return msgDTO;
+    }
+
+    private MsgDTO toAutoReplyStatusDto(XianyuGoodsAutoReplyRecord record) {
+        MsgDTO status = new MsgDTO();
+        status.setId(-record.getId());
+        status.setSId(record.getSId());
+        status.setXyGoodsId(record.getXyGoodsId());
+        status.setAutoReplyRecordId(record.getId());
+        status.setScheduledTime(record.getScheduledTime());
+        status.setTimelineType(switch (record.getState()) {
+            case 0 -> "AI_PENDING";
+            case 2 -> "AI_PROCESSING";
+            case -1 -> "AI_FAILED";
+            case -2 -> "AI_CANCELLED";
+            default -> "MESSAGE";
+        });
+        LocalDateTime timelineTime = record.getState() != null && record.getState() == 0
+                ? record.getScheduledTime() : record.getStatusTime();
+        status.setMessageTime(toEpochMillis(timelineTime));
+        if (record.getState() != null && record.getState() == -1) {
+            status.setStatusReason(safeStatusReason(record.getLastErrorCode()));
+        } else if (record.getState() != null && record.getState() == -2) {
+            status.setStatusReason("SERVICE_RESTART".equals(record.getLastErrorCode())
+                    ? "服务重启，AI回复已取消" : null);
+        }
+        return status;
+    }
+
+    private Long toEpochMillis(LocalDateTime value) {
+        return value == null ? null : value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
+
+    private String safeStatusReason(String errorCode) {
+        if ("AI_TIMEOUT".equals(errorCode)) {
+            return "AI 请求超时";
+        }
+        if ("AI_NOT_AVAILABLE".equals(errorCode)) {
+            return "AI 服务未配置或不可用";
+        }
+        if ("AI_EMPTY_REPLY".equals(errorCode)) {
+            return "AI 未返回有效回复";
+        }
+        if ("SEND_RESULT_UNKNOWN".equals(errorCode)) {
+            return "闲鱼发送结果未确认，请人工核对";
+        }
+        return "自动回复失败";
     }
 }

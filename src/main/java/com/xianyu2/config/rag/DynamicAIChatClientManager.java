@@ -15,11 +15,15 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.http.client.OkHttp3ClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
 import org.springframework.stereotype.Component;
+import okhttp3.OkHttpClient;
 
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 动态AI ChatClient管理器
@@ -51,6 +55,9 @@ public class DynamicAIChatClientManager {
     @Value("${ai.enabled:false}")
     private boolean aiEnabled;
 
+    @Value("${ai.request-timeout-seconds:120}")
+    private int requestTimeoutSeconds;
+
     /** 每个租户独立缓存AI客户端和模型配置。 */
     private final Map<Long, String> cachedApiKeys = new ConcurrentHashMap<>();
     private final Map<Long, String> cachedBaseUrls = new ConcurrentHashMap<>();
@@ -61,6 +68,8 @@ public class DynamicAIChatClientManager {
 
     /** 读写锁，保护ChatClient的线程安全 */
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
+
+    private volatile OkHttpClient aiHttpClient;
 
     /**
      * 获取ChatClient实例
@@ -239,6 +248,7 @@ public class DynamicAIChatClientManager {
                 .apiKey(new SimpleApiKey(config.apiKey()))
                 .baseUrl(endpoint.baseUrl())
                 .completionsPath(endpoint.path())
+                .restClientBuilder(aiRestClientBuilder())
                 .build();
         OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
                 .model(config.model())
@@ -254,6 +264,7 @@ public class DynamicAIChatClientManager {
                 .apiKey(new SimpleApiKey(config.apiKey()))
                 .baseUrl(endpoint.baseUrl())
                 .completionsPath(endpoint.path())
+                .restClientBuilder(aiRestClientBuilder())
                 .build();
         AnthropicChatOptions chatOptions = AnthropicChatOptions.builder()
                 .model(config.model())
@@ -263,6 +274,30 @@ public class DynamicAIChatClientManager {
                 .anthropicApi(anthropicApi)
                 .defaultOptions(chatOptions)
                 .build();
+    }
+
+    @SuppressWarnings("removal") // OkHttp callTimeout is required to cancel the entire provider request.
+    private RestClient.Builder aiRestClientBuilder() {
+        return RestClient.builder().requestFactory(new OkHttp3ClientHttpRequestFactory(aiHttpClient()));
+    }
+
+    OkHttpClient aiHttpClient() {
+        OkHttpClient cached = aiHttpClient;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (this) {
+            if (aiHttpClient == null) {
+                int timeoutSeconds = Math.max(1, requestTimeoutSeconds);
+                aiHttpClient = new OkHttpClient.Builder()
+                        .callTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                        .connectTimeout(15, TimeUnit.SECONDS)
+                        .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                        .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                        .build();
+            }
+            return aiHttpClient;
+        }
     }
 
     /**

@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -14,6 +15,8 @@ import java.util.List;
 @Slf4j
 @Service
 public class ChatMessagePersistenceService {
+
+    private static final long CROSS_SOURCE_MATCH_WINDOW_MILLIS = 5 * 60 * 1_000L;
 
     private final XianyuChatMessageMapper messageMapper;
     private final AccountService accountService;
@@ -67,14 +70,14 @@ public class ChatMessagePersistenceService {
         if (ChatMessageDeduplication.isLocalAiCandidate(
                 message.getContentType(), message.getMessageSource())) {
             message.setReplyOrigin("AI");
+        } else if (ChatMessageDeduplication.isLocalManualReplyCandidate(
+                message.getContentType(), message.getMessageSource())) {
+            message.setReplyOrigin("BACKEND");
         }
     }
 
     private boolean requiresCrossSourceReconciliation(XianyuChatMessage message) {
-        return message.getContentType() != null
-                && (message.getContentType() == ChatMessageDeduplication.PLATFORM_CONTENT_TYPE
-                || message.getContentType() == ChatMessageDeduplication.LOCAL_AI_CONTENT_TYPE
-                || message.getContentType() == ChatMessageDeduplication.LOCAL_MANUAL_REPLY_CONTENT_TYPE);
+        return ChatMessageDeduplication.supportsCrossSourceReconciliation(message.getContentType());
     }
 
     private void reconcileCrossSourceDuplicate(XianyuChatMessage message, String ownUserId) {
@@ -99,31 +102,67 @@ public class ChatMessagePersistenceService {
         }
 
         if (platformMessage) {
-            reconcileWithCandidates(message, ownUserId, ChatMessageDeduplication.LOCAL_AI_SOURCE,
-                    ChatMessageDeduplication.LOCAL_AI_CONTENT_TYPE, true, false);
-            reconcileWithCandidates(message, ownUserId, ChatMessageDeduplication.LOCAL_SOURCE,
-                    ChatMessageDeduplication.LOCAL_MANUAL_REPLY_CONTENT_TYPE, false, true);
+            reconcilePlatformMessage(message, ownUserId);
             return;
         }
 
+        Integer platformContentType = ChatMessageDeduplication.platformContentTypeForLocal(message.getContentType());
+        if (platformContentType == null) {
+            return;
+        }
         reconcileWithCandidates(message, ownUserId, ChatMessageDeduplication.PLATFORM_SOURCE,
-                ChatMessageDeduplication.PLATFORM_CONTENT_TYPE, localAiMessage, localManualMessage);
+                platformContentType,
+                localAiMessage ? "AI" : (localManualMessage ? "BACKEND" : null), localManualMessage);
+    }
+
+    private void reconcilePlatformMessage(XianyuChatMessage platformMessage, String ownUserId) {
+        Integer aiContentType = ChatMessageDeduplication.localAiContentTypeForPlatform(platformMessage.getContentType());
+        Integer manualContentType = ChatMessageDeduplication.localManualContentTypeForPlatform(platformMessage.getContentType());
+        if (aiContentType == null || manualContentType == null) {
+            return;
+        }
+        List<ReplyCandidate> candidates = new ArrayList<>();
+        addPlatformCandidates(candidates, platformMessage, ownUserId, ChatMessageDeduplication.LOCAL_AI_SOURCE,
+                aiContentType, "AI", false);
+        addPlatformCandidates(candidates, platformMessage, ownUserId, ChatMessageDeduplication.LOCAL_SOURCE,
+                manualContentType, "BACKEND", true);
+        ReplyCandidate candidate = nearestReplyCandidate(platformMessage, candidates);
+        if (candidate != null) {
+            reconcilePair(platformMessage, candidate.message(), candidate.replyOrigin());
+        }
+    }
+
+    private void addPlatformCandidates(List<ReplyCandidate> matches, XianyuChatMessage platformMessage,
+                                       String ownUserId, String source, int contentType,
+                                       String replyOrigin, boolean requireOwnSender) {
+        List<XianyuChatMessage> candidates = messageMapper.findCrossSourceCandidates(
+                platformMessage.getXianyuAccountId(), platformMessage.getSId(), null, source, contentType);
+        if (candidates == null) {
+            return;
+        }
+        candidates.stream()
+                .filter(candidate -> isMatch(platformMessage, candidate, ownUserId, requireOwnSender))
+                .map(candidate -> new ReplyCandidate(candidate, replyOrigin))
+                .forEach(matches::add);
     }
 
     private void reconcileWithCandidates(XianyuChatMessage message, String ownUserId,
                                          String candidateSource, int candidateContentType,
-                                         boolean markAiReplyOrigin, boolean requireOwnSender) {
+                                         String replyOrigin, boolean requireOwnSender) {
         List<XianyuChatMessage> candidates = messageMapper.findCrossSourceCandidates(
                 message.getXianyuAccountId(), message.getSId(), null,
                 candidateSource, candidateContentType);
-        List<XianyuChatMessage> matches = candidates.stream()
+        List<XianyuChatMessage> matches = (candidates == null ? List.<XianyuChatMessage>of() : candidates).stream()
                 .filter(candidate -> isMatch(message, candidate, ownUserId, requireOwnSender))
                 .toList();
-        if (matches.size() != 1) {
+        XianyuChatMessage candidate = nearestCandidate(message, matches);
+        if (candidate == null) {
             return;
         }
+        reconcilePair(message, candidate, replyOrigin);
+    }
 
-        XianyuChatMessage candidate = matches.get(0);
+    private void reconcilePair(XianyuChatMessage message, XianyuChatMessage candidate, String replyOrigin) {
         Long currentId = message.getId();
         if (currentId == null) {
             XianyuChatMessage persisted = messageMapper.findByPnmId(
@@ -146,12 +185,70 @@ public class ChatMessagePersistenceService {
         if (platformId.equals(localId)) {
             return;
         }
-        messageMapper.markDuplicate(localId, platformId);
-        if (markAiReplyOrigin) {
-            messageMapper.markAiReplyOrigin(platformId);
+        if (messageMapper.markDuplicate(localId, platformId) != 1) {
+            return;
+        }
+        if (replyOrigin != null) {
+            messageMapper.markReplyOrigin(platformId, replyOrigin);
         }
         log.info("跨来源消息去重: accountId={}, sid={}, platformId={}, localId={}, aiReply={}",
-                message.getXianyuAccountId(), message.getSId(), platformId, localId, markAiReplyOrigin);
+                message.getXianyuAccountId(), message.getSId(), platformId, localId, "AI".equals(replyOrigin));
+    }
+
+    private XianyuChatMessage nearestCandidate(XianyuChatMessage incoming, List<XianyuChatMessage> candidates) {
+        if (incoming.getMessageTime() == null) {
+            return null;
+        }
+        XianyuChatMessage nearest = null;
+        long nearestDelta = Long.MAX_VALUE;
+        boolean ambiguous = false;
+        for (XianyuChatMessage candidate : candidates) {
+            if (candidate.getMessageTime() == null) {
+                continue;
+            }
+            long delta = Math.abs(incoming.getMessageTime() - candidate.getMessageTime());
+            if (delta > CROSS_SOURCE_MATCH_WINDOW_MILLIS) {
+                continue;
+            }
+            if (delta < nearestDelta) {
+                nearest = candidate;
+                nearestDelta = delta;
+                ambiguous = false;
+            } else if (delta == nearestDelta) {
+                ambiguous = true;
+            }
+        }
+        return ambiguous ? null : nearest;
+    }
+
+    private ReplyCandidate nearestReplyCandidate(XianyuChatMessage incoming, List<ReplyCandidate> candidates) {
+        if (incoming.getMessageTime() == null) {
+            return null;
+        }
+        ReplyCandidate nearest = null;
+        long nearestDelta = Long.MAX_VALUE;
+        boolean ambiguous = false;
+        for (ReplyCandidate candidate : candidates) {
+            Long candidateTime = candidate.message().getMessageTime();
+            if (candidateTime == null) {
+                continue;
+            }
+            long delta = Math.abs(incoming.getMessageTime() - candidateTime);
+            if (delta > CROSS_SOURCE_MATCH_WINDOW_MILLIS) {
+                continue;
+            }
+            if (delta < nearestDelta) {
+                nearest = candidate;
+                nearestDelta = delta;
+                ambiguous = false;
+            } else if (delta == nearestDelta) {
+                ambiguous = true;
+            }
+        }
+        return ambiguous ? null : nearest;
+    }
+
+    private record ReplyCandidate(XianyuChatMessage message, String replyOrigin) {
     }
 
     private boolean isMatch(XianyuChatMessage incoming, XianyuChatMessage candidate, String ownUserId,

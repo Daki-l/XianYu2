@@ -53,12 +53,14 @@ public class AIReplyStrategy implements ReplyStrategy {
 
             RAGReplyResult result = aiService.chatByRAGWithFixedMaterial(buyerMessage, xyGoodsId, fixedMaterial, goodsDetail);
 
-            if (result != null && result.getReplyContent() != null && !result.getReplyContent().trim().isEmpty()) {
+            if (result != null && result.isSuccess()
+                    && result.getReplyContent() != null && !result.getReplyContent().isBlank()) {
                 return ReplyResult.of(Collections.singletonList(
                         ReplyResult.ReplyItem.text(result.getReplyContent(), REPLY_TYPE_AI)
                 ));
             }
-            return ReplyResult.fail();
+            return result == null ? ReplyResult.fail("AI_REQUEST_FAILED", "AI 服务请求失败")
+                    : ReplyResult.fail(result.getErrorCode(), result.getErrorMessage());
         } catch (Exception e) {
             log.error("【账号{}】AI回复策略执行失败: xyGoodsId={}", accountId, xyGoodsId, e);
             return ReplyResult.fail();

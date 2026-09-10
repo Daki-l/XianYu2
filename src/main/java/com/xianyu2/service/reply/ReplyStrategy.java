@@ -17,6 +17,8 @@ public interface ReplyStrategy {
         private String matchedKeyword;
         private KeywordReplyRuleBO matchedRule;
         private List<KeywordReplyRuleBO> matchedRules = new ArrayList<>();
+        private String errorCode;
+        private String errorMessage;
 
         @lombok.Data
         public static class ReplyItem {
@@ -57,6 +59,13 @@ public interface ReplyStrategy {
         public static ReplyResult fail() {
             ReplyResult r = new ReplyResult();
             r.setSuccess(false);
+            return r;
+        }
+
+        public static ReplyResult fail(String errorCode, String errorMessage) {
+            ReplyResult r = fail();
+            r.setErrorCode(errorCode);
+            r.setErrorMessage(errorMessage);
             return r;
         }
     }

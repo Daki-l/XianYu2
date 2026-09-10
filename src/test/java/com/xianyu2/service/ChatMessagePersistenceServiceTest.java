@@ -40,6 +40,7 @@ class ChatMessagePersistenceServiceTest {
             }
             return 1;
         });
+        lenient().when(messageMapper.markDuplicate(any(), any())).thenReturn(1);
     }
 
     @Test
@@ -53,7 +54,7 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.save(platform);
 
         verify(messageMapper).markDuplicate(200L, 100L);
-        verify(messageMapper).markAiReplyOrigin(100L);
+        verify(messageMapper).markReplyOrigin(100L, "AI");
         assertEquals("PLATFORM", platform.getMessageSource());
         assertTrue(platform.getDedupeFingerprint() != null);
     }
@@ -61,7 +62,7 @@ class ChatMessagePersistenceServiceTest {
     @Test
     void ambiguousCandidatesAreKept() {
         XianyuChatMessage first = message(200L, 888, "own-user", 1_000L);
-        XianyuChatMessage second = message(201L, 888, "own-user", 1_500L);
+        XianyuChatMessage second = message(201L, 888, "own-user", 1_000L);
         when(messageMapper.findCrossSourceCandidates(
                 1L, "sid@goofish", null, "LOCAL_AI", 888))
                 .thenReturn(List.of(first, second));
@@ -69,7 +70,7 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.save(message(null, 1, "own-user", 2_000L));
 
         verify(messageMapper, never()).markDuplicate(any(), any());
-        verify(messageMapper, never()).markAiReplyOrigin(any());
+        verify(messageMapper, never()).markReplyOrigin(any(), any());
     }
 
     @Test
@@ -106,7 +107,7 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.save(local);
 
         verify(messageMapper).markDuplicate(100L, 300L);
-        verify(messageMapper).markAiReplyOrigin(300L);
+        verify(messageMapper).markReplyOrigin(300L, "AI");
     }
 
     @Test
@@ -124,7 +125,40 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.save(platform);
 
         verify(messageMapper).markDuplicate(200L, 100L);
-        verify(messageMapper, never()).markAiReplyOrigin(any());
+        verify(messageMapper).markReplyOrigin(100L, "BACKEND");
+    }
+
+    @Test
+    void platformMessageDoesNotMergeEquallyCloseAiAndManualCandidates() {
+        XianyuChatMessage ai = message(200L, 888, "own-user", 1_000L);
+        XianyuChatMessage manual = message(201L, 999, "own-user", 1_000L);
+        manual.setMessageSource("LOCAL");
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL_AI", 888)).thenReturn(List.of(ai));
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL", 999)).thenReturn(List.of(manual));
+
+        persistenceService.save(message(null, 1, "own-user", 2_000L));
+
+        verify(messageMapper, never()).markDuplicate(any(), any());
+        verify(messageMapper, never()).markReplyOrigin(any(), any());
+    }
+
+    @Test
+    void platformImageWinsWhenThereIsOneMatchingLocalAiImage() {
+        XianyuChatMessage localImage = message(200L, 887, "own-user", 1_000L);
+        localImage.setMsgContent("[图片]http://example.test/image.png");
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL_AI", 887)).thenReturn(List.of(localImage));
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL", 997)).thenReturn(List.of());
+
+        XianyuChatMessage platformImage = message(null, 2, "own-user", 2_000L);
+        platformImage.setMsgContent("https://example.test/image.png");
+        persistenceService.save(platformImage);
+
+        verify(messageMapper).markDuplicate(200L, 100L);
+        verify(messageMapper).markReplyOrigin(100L, "AI");
     }
 
     @Test
@@ -139,7 +173,7 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.save(localManual);
 
         verify(messageMapper).markDuplicate(100L, 300L);
-        verify(messageMapper, never()).markAiReplyOrigin(any());
+        verify(messageMapper).markReplyOrigin(300L, "BACKEND");
     }
 
     @Test
@@ -172,7 +206,7 @@ class ChatMessagePersistenceServiceTest {
         persistenceService.reconcileSession(1L, "sid@goofish");
 
         verify(messageMapper).markDuplicate(200L, 300L);
-        verify(messageMapper, never()).markAiReplyOrigin(any());
+        verify(messageMapper).markReplyOrigin(300L, "BACKEND");
     }
 
     @Test
@@ -190,7 +224,7 @@ class ChatMessagePersistenceServiceTest {
     }
 
     @Test
-    void messagesWithDifferentTimesStillMergeWhenTheOtherFieldsMatch() {
+    void messagesOutsideTheTimeWindowAreNotMerged() {
         when(messageMapper.findCrossSourceCandidates(
                 1L, "sid@goofish", null, "LOCAL_AI", 888))
                 .thenReturn(List.of(message(200L, 888, "own-user", 2_000L)));
@@ -198,7 +232,7 @@ class ChatMessagePersistenceServiceTest {
         XianyuChatMessage platform = message(null, 1, "own-user", 86_400_000L);
         persistenceService.save(platform);
 
-        verify(messageMapper).markDuplicate(200L, 100L);
+        verify(messageMapper, never()).markDuplicate(any(), any());
     }
 
     private XianyuChatMessage message(Long id, int contentType, String sender, long time) {

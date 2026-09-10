@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.List;
@@ -101,11 +102,24 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
      * </ul>
      */
     private final Map<String, List<ChatMessageData>> pendingMessages = new ConcurrentHashMap<>();
+
+    @PostConstruct
+    void cancelUnfinishedTasksOnStartup() {
+        int cancelled = autoReplyRecordMapper.cancelUnfinishedOnStartup();
+        if (cancelled > 0) {
+            log.info("应用启动时已取消 {} 条未完成的 AI 自动回复任务", cancelled);
+        }
+    }
     
     @PreDestroy
     @Override
     public void shutdown() {
         log.info("关闭自动回复延时调度器...");
+        try {
+            autoReplyRecordMapper.cancelUnfinishedOnStartup();
+        } catch (Exception e) {
+            log.warn("关闭时取消未完成 AI 自动回复任务失败", e);
+        }
         pendingTasks.forEach((key, future) -> {
             if (future != null && !future.isDone()) {
                 future.cancel(false);
@@ -235,7 +249,7 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
                 dispatchTask(record.getId(), messages);
             } catch (Exception e) {
                 log.error("恢复延时回复任务失败: recordId={}", record.getId(), e);
-                autoReplyRecordMapper.updateStateAndContent(record.getId(), -1, null);
+                autoReplyRecordMapper.failActive(record.getId(), "TASK_CONTEXT_INVALID", "自动回复任务上下文无效");
             }
         }
     }
@@ -277,7 +291,12 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
         if (autoReplyRecordMapper.claim(recordId, workerId, 120) == 0) {
             return;
         }
-        taskExecutor.execute(() -> executeClaimedTask(recordId, messages));
+        try {
+            taskExecutor.execute(() -> executeClaimedTask(recordId, messages));
+        } catch (RuntimeException e) {
+            autoReplyRecordMapper.failActive(recordId, "TASK_EXECUTOR_REJECTED", "自动回复任务无法执行");
+            throw e;
+        }
     }
 
     private void executeClaimedTask(Long recordId, List<ChatMessageData> messages) {
@@ -306,11 +325,11 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
             autoReplyService.executeAutoReply(messages, recordId);
             XianyuGoodsAutoReplyRecord result = autoReplyRecordMapper.selectById(recordId);
             if (result != null && Integer.valueOf(2).equals(result.getState())) {
-                autoReplyRecordMapper.updateStateAndContent(recordId, -1, null);
+                autoReplyRecordMapper.failActive(recordId, "AUTO_REPLY_INCOMPLETE", "自动回复未完成");
             }
         } catch (Exception e) {
             log.error("【账号{}】执行持久化延时回复异常: sId={}", accountId, sId, e);
-            autoReplyRecordMapper.updateStateAndContent(recordId, -1, null);
+            autoReplyRecordMapper.failActive(recordId, "AUTO_REPLY_EXCEPTION", "自动回复执行失败");
         } finally {
             TenantContext.clear();
         }

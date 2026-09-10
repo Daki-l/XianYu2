@@ -30,6 +30,8 @@ import java.util.List;
 @Slf4j
 @Service
 public class AutoReplyServiceImpl implements AutoReplyService {
+
+    private static final String DIRECT_WORKER_ID = "reply-direct";
     
     @Autowired
     private XianyuGoodsConfigMapper goodsConfigMapper;
@@ -97,7 +99,9 @@ public class AutoReplyServiceImpl implements AutoReplyService {
         
         log.info("【账号{}】开始执行自动回复: xyGoodsId={}, sId={}, 触发消息数={}, buyerMessage={}", 
                 accountId, xyGoodsId, sId, messageList.size(), buyerMessage);
-        
+        java.util.concurrent.atomic.AtomicReference<Long> failureRecordId =
+                new java.util.concurrent.atomic.AtomicReference<>(existingRecordId);
+
         try {
             // 1. 检查是否有任何回复开关开启
             if (!isAnyReplyEnabled(accountId, xyGoodsId)) {
@@ -149,14 +153,20 @@ public class AutoReplyServiceImpl implements AutoReplyService {
             record.setBuyerMessage(buyerMessage);
             record.setState(0);
             
-            if (existingRecordId == null) {
+            Long recordId = existingRecordId;
+            if (recordId == null) {
                 int insertResult = autoReplyRecordMapper.insert(record);
                 if (insertResult <= 0) {
                     log.info("【账号{}】该消息已处理过，跳过自动回复: sId={}, pnmId={}", accountId, sId, pnmId);
                     return;
                 }
+                recordId = record.getId();
+                failureRecordId.set(recordId);
+                if (autoReplyRecordMapper.claim(recordId, DIRECT_WORKER_ID, 120) != 1) {
+                    return;
+                }
             } else {
-                record.setId(existingRecordId);
+                record.setId(recordId);
             }
             
             // 6. 执行回复策略
@@ -164,7 +174,7 @@ public class AutoReplyServiceImpl implements AutoReplyService {
             
             if (!replyResult.isSuccess() || replyResult.getItems() == null || replyResult.getItems().isEmpty()) {
                 log.warn("【账号{}】回复策略未生成有效内容", accountId);
-                updateRecordState(record.getId(), -1, null);
+                failRecord(recordId, replyResult.getErrorCode(), replyResult.getErrorMessage());
                 return;
             }
             
@@ -216,6 +226,10 @@ public class AutoReplyServiceImpl implements AutoReplyService {
             String toId = cid;
             
             for (ReplyStrategy.ReplyResult.ReplyItem item : replyResult.getItems()) {
+                if (!isSendAllowed(recordId)) {
+                    log.info("【账号{}】自动回复任务已取消或结束，跳过发送: recordId={}", accountId, recordId);
+                    return;
+                }
                 if (item.getImageUrl() != null && !item.getImageUrl().isEmpty()) {
                     hasReplyContent = true;
                     boolean imageSent = webSocketService.sendImageMessageWithResult(accountId, cid, toId, item.getImageUrl(), 0, 0);
@@ -228,10 +242,13 @@ public class AutoReplyServiceImpl implements AutoReplyService {
                 }
                 if (item.getTextContent() != null && !item.getTextContent().trim().isEmpty()) {
                     hasReplyContent = true;
-                    boolean textSent = webSocketService.sendMessage(accountId, cid, toId, item.getTextContent());
+                    boolean textSent = webSocketService.sendMessageWithResult(accountId, cid, toId, item.getTextContent());
                     if (!textSent) {
                         sendSuccess = false;
                     }
+                }
+                if (!sendSuccess) {
+                    break;
                 }
             }
             sendSuccess = hasReplyContent && sendSuccess;
@@ -239,18 +256,24 @@ public class AutoReplyServiceImpl implements AutoReplyService {
             // 9. 更新记录状态
             if (sendSuccess) {
                 log.info("【账号{}】自动回复成功: xyGoodsId={}, sId={}", accountId, xyGoodsId, sId);
-                updateRecordState(record.getId(), 1, allReplyText);
+                if (autoReplyRecordMapper.completeClaimed(recordId, 1, allReplyText) == 0) {
+                    log.warn("【账号{}】自动回复已发送但任务状态不再可完成: recordId={}", accountId, recordId);
+                    return;
+                }
                 
                 if (allReplyText != null && !allReplyText.trim().isEmpty()) {
                     sentMessageSaveService.saveAiAssistantReply(accountId, cid, toId, allReplyText, xyGoodsId);
                 }
             } else {
                 log.error("【账号{}】自动回复发送失败: xyGoodsId={}, sId={}", accountId, xyGoodsId, sId);
-                updateRecordState(record.getId(), -1, allReplyText);
+                failRecord(recordId, "SEND_RESULT_UNKNOWN", "闲鱼发送结果未确认，请人工核对");
             }
             
         } catch (Exception e) {
             log.error("【账号{}】执行自动回复异常: xyGoodsId={}, sId={}", accountId, xyGoodsId, sId, e);
+            if (failureRecordId.get() != null) {
+                failRecord(failureRecordId.get(), "AUTO_REPLY_EXCEPTION", "自动回复执行失败");
+            }
         }
     }
     
@@ -277,11 +300,17 @@ public class AutoReplyServiceImpl implements AutoReplyService {
         }
     }
     
-    private void updateRecordState(Long recordId, Integer state, String replyContent) {
+    private boolean isSendAllowed(Long recordId) {
+        return recordId != null && autoReplyRecordMapper.isProcessing(recordId);
+    }
+
+    private void failRecord(Long recordId, String errorCode, String errorMessage) {
+        String safeCode = errorCode == null || errorCode.isBlank() ? "AUTO_REPLY_FAILED" : errorCode;
+        String safeMessage = errorMessage == null || errorMessage.isBlank() ? "自动回复生成失败" : errorMessage;
         try {
-            autoReplyRecordMapper.updateStateAndContent(recordId, state, replyContent);
+            autoReplyRecordMapper.failActive(recordId, safeCode, safeMessage);
         } catch (Exception e) {
-            log.error("更新回复记录状态失败: recordId={}, state={}", recordId, state, e);
+            log.error("更新自动回复失败状态失败: recordId={}", recordId, e);
         }
     }
 }

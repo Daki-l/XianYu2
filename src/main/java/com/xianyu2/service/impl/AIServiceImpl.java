@@ -72,6 +72,37 @@ public class AIServiceImpl implements AIService {
         return msg;
     }
 
+    private void setSuccessfulReply(RAGReplyResult result, String replyContent) {
+        if (replyContent == null || replyContent.isBlank()) {
+            setFailedReply(result, "AI_EMPTY_REPLY", "AI 未返回有效回复");
+            return;
+        }
+        result.setSuccess(true);
+        result.setReplyContent(replyContent.trim());
+        result.setErrorCode(null);
+        result.setErrorMessage(null);
+    }
+
+    private void setFailedReply(RAGReplyResult result, String errorCode, String errorMessage) {
+        result.setSuccess(false);
+        result.setReplyContent(null);
+        result.setErrorCode(errorCode);
+        result.setErrorMessage(errorMessage);
+    }
+
+    private void setRequestFailure(RAGReplyResult result, Throwable error) {
+        Throwable cause = error;
+        while (cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+        String className = cause.getClass().getName();
+        if (className.contains("Timeout") || className.contains("SocketTimeout")) {
+            setFailedReply(result, "AI_TIMEOUT", "AI 请求超时");
+        } else {
+            setFailedReply(result, "AI_REQUEST_FAILED", "AI 服务请求失败");
+        }
+    }
+
     @Autowired
     private DynamicAIChatClientManager dynamicAIChatClientManager;
 
@@ -174,7 +205,7 @@ public class AIServiceImpl implements AIService {
         // 1. 检查AI是否可用
         ChatClient chatClient = dynamicAIChatClientManager.getChatClient();
         if (chatClient == null) {
-            result.setReplyContent(AI_NOT_AVAILABLE_MSG);
+            setFailedReply(result, "AI_NOT_AVAILABLE", "AI 服务未配置或不可用");
             return result;
         }
 
@@ -246,10 +277,10 @@ public class AIServiceImpl implements AIService {
                     .user(userMessage)
                     .call()
                     .content();
-            result.setReplyContent(replyContent);
+            setSuccessfulReply(result, replyContent);
         } catch (Exception e) {
             log.error("[AI Chat WithDetails] 调用LLM失败: {}", e.getMessage());
-            result.setReplyContent("AI回复生成失败：" + e.getMessage());
+            setRequestFailure(result, e);
         }
 
         result.setHitDetails(hitDetails);
@@ -262,7 +293,7 @@ public class AIServiceImpl implements AIService {
         
         ChatClient chatClient = dynamicAIChatClientManager.getChatClient();
         if (chatClient == null) {
-            result.setReplyContent(AI_NOT_AVAILABLE_MSG);
+            setFailedReply(result, "AI_NOT_AVAILABLE", "AI 服务未配置或不可用");
             return result;
         }
 
@@ -329,10 +360,10 @@ public class AIServiceImpl implements AIService {
                     .user(userMessage)
                     .call()
                     .content();
-            result.setReplyContent(replyContent);
+            setSuccessfulReply(result, replyContent);
         } catch (Exception e) {
             log.error("[AI Chat WithDetails+Context] 调用LLM失败: {}", e.getMessage());
-            result.setReplyContent("AI回复生成失败：" + e.getMessage());
+            setRequestFailure(result, e);
         }
 
         result.setHitDetails(hitDetails);
@@ -424,7 +455,7 @@ public class AIServiceImpl implements AIService {
         
         ChatClient chatClient = dynamicAIChatClientManager.getChatClient();
         if (chatClient == null) {
-            result.setReplyContent(AI_NOT_AVAILABLE_MSG);
+            setFailedReply(result, "AI_NOT_AVAILABLE", "AI 服务未配置或不可用");
             return result;
         }
 
@@ -522,10 +553,10 @@ public class AIServiceImpl implements AIService {
                         .content();
             }
             
-            result.setReplyContent(replyContent);
+            setSuccessfulReply(result, replyContent);
         } catch (Exception e) {
             log.error("[AI Chat FixedMaterial] 调用LLM失败: {}", e.getMessage());
-            result.setReplyContent("AI回复生成失败：" + e.getMessage());
+            setRequestFailure(result, e);
         }
 
         result.setHitDetails(hitDetails);

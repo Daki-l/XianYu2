@@ -27,6 +27,7 @@ app:
 # AI功能开关（默认开启，API Key从数据库xianyu_sys_setting表读取，未配置时AI功能自动降级）
 ai:
   enabled: ${AI_ENABLED:true}
+  request-timeout-seconds: ${AI_REQUEST_TIMEOUT_SECONDS:120}
   vectorstore:
     simple:
       file-path: ${VECTOR_STORE_FILE:data/vectorstore.json}

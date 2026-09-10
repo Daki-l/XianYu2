@@ -2,6 +2,8 @@ package com.xianyu2.controller.dto;
 
 import lombok.Data;
 
+import java.time.LocalDateTime;
+
 /**
  * 消息DTO
  */
@@ -55,5 +57,9 @@ public class MsgDTO {
 
     private String messageSource;
     private String replyOrigin;
+    private String timelineType;
+    private Long autoReplyRecordId;
+    private LocalDateTime scheduledTime;
+    private String statusReason;
 }
 

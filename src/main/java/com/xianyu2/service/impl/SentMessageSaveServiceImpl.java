@@ -91,6 +91,13 @@ public class SentMessageSaveServiceImpl implements SentMessageSaveService {
             
             message.setContentType(contentType);
             message.setMsgContent(text);
+            if (contentType == CONTENT_TYPE_AI_ASSISTANT_REPLY || contentType == CONTENT_TYPE_AI_IMAGE_REPLY) {
+                message.setMessageSource("LOCAL_AI");
+                message.setReplyOrigin("AI");
+            } else {
+                message.setMessageSource("LOCAL");
+                message.setReplyOrigin("BACKEND");
+            }
             
             // 发送者信息
             message.setSenderUserId(ownUserId);

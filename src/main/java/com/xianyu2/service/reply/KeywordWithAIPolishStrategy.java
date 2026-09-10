@@ -131,12 +131,14 @@ public class KeywordWithAIPolishStrategy implements ReplyStrategy {
 
             RAGReplyResult ragResult = aiService.chatByRAGWithFixedMaterial(buyerMessage, xyGoodsId, fixedMaterial, goodsDetail);
 
-            if (ragResult != null && ragResult.getReplyContent() != null && !ragResult.getReplyContent().trim().isEmpty()) {
+            if (ragResult != null && ragResult.isSuccess()
+                    && ragResult.getReplyContent() != null && !ragResult.getReplyContent().isBlank()) {
                 return ReplyResult.of(Collections.singletonList(
                         ReplyResult.ReplyItem.text(ragResult.getReplyContent(), REPLY_TYPE_AI)
                 ));
             }
-            return ReplyResult.fail();
+            return ragResult == null ? ReplyResult.fail("AI_REQUEST_FAILED", "AI 服务请求失败")
+                    : ReplyResult.fail(ragResult.getErrorCode(), ragResult.getErrorMessage());
         } catch (Exception e) {
             log.error("【账号{}】AI回复失败: xyGoodsId={}", accountId, xyGoodsId, e);
             return ReplyResult.fail();

@@ -10,9 +10,18 @@ import java.util.List;
  */
 @Data
 public class RAGReplyResult {
-    
+
+    /** Whether the model produced a reply that is safe to send to a buyer. */
+    private boolean success;
+
     /** AI回复内容 */
     private String replyContent;
+
+    /** A stable, safe-to-display failure code for callers that need to persist it. */
+    private String errorCode;
+
+    /** A concise, sanitized failure reason. It must never contain provider payloads. */
+    private String errorMessage;
     
     /** RAG命中的资料详情列表 */
     private List<RAGHitDetail> hitDetails;
