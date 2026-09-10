@@ -34,6 +34,10 @@ public class PlatformHistoryMessageParser {
 
             Long messageTime = firstLong(message, model,
                     "createdAt", "createTime", "sendTime", "messageTime", "timestamp");
+            if (messageTime == null) {
+                // A sync timestamp is not a message timestamp. Keeping this record would corrupt ordering.
+                continue;
+            }
             String senderUserId = firstNonBlank(
                     firstText(extension, "senderUserId"),
                     firstText(message, "senderUserId", "senderId", "fromId"));
@@ -106,18 +110,27 @@ public class PlatformHistoryMessageParser {
         for (String key : keys) {
             Long value = longValue(primary.get(key));
             if (value != null) {
-                return normalizeTime(value);
+                Long normalized = normalizeTime(value);
+                if (normalized != null) {
+                    return normalized;
+                }
             }
             value = longValue(fallback.get(key));
             if (value != null) {
-                return normalizeTime(value);
+                Long normalized = normalizeTime(value);
+                if (normalized != null) {
+                    return normalized;
+                }
             }
         }
-        return System.currentTimeMillis();
+        return null;
     }
 
     private Long normalizeTime(Long value) {
-        return value > 0 && value < 100000000000L ? value * 1000 : value;
+        if (value == null || value <= 0) {
+            return null;
+        }
+        return value < 100000000000L ? value * 1000 : value;
     }
 
     private String extractItemId(String url) {
