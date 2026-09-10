@@ -27,21 +27,40 @@ update_app_image() {
 }
 
 wait_for_healthy() {
-  local state
+  local state='unknown'
   for _ in $(seq 1 60); do
     state="$(docker inspect "$container_name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
     case "$state" in
       healthy)
-        curl --fail --silent --show-error http://127.0.0.1:12400/actuator/health >/dev/null
-        return 0
+        if curl --fail --silent --show-error http://127.0.0.1:12400/actuator/health >/dev/null; then
+          return 0
+        fi
+        echo 'Container is healthy, but the actuator health endpoint is unavailable.' >&2
+        return 1
         ;;
       unhealthy|exited|dead)
+        echo "Container entered an unhealthy state: ${state}" >&2
         return 1
         ;;
     esac
     sleep 3
   done
+  echo "Timed out waiting for the container to become healthy; last state: ${state:-unknown}." >&2
   return 1
+}
+
+report_deployment_diagnostics() {
+  echo 'Deployment health check failed. Collecting diagnostics before rollback.' >&2
+  if ! docker inspect "$container_name" \
+    --format 'container status={{.State.Status}} exit_code={{.State.ExitCode}} error={{.State.Error}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+    2>&1; then
+    echo "Container ${container_name} is unavailable for inspection." >&2
+  fi
+
+  echo 'Container health details:' >&2
+  docker inspect "$container_name" --format '{{json .State.Health}}' 2>&1 || true
+  echo 'Recent application logs (last 200 lines):' >&2
+  docker logs --tail 200 "$container_name" 2>&1 || true
 }
 
 parse_command() {
@@ -100,6 +119,8 @@ if compose up -d --no-build --force-recreate app && wait_for_healthy; then
   printf 'deployment=ok\ncommit=%s\nimage=%s\n' "$(git rev-parse --short HEAD)" "$actual_image"
   exit 0
 fi
+
+report_deployment_diagnostics
 
 if [[ -n "$previous_image" ]]; then
   echo 'Deployment failed; restoring the previous image.' >&2

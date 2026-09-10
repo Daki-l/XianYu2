@@ -15,7 +15,30 @@ env:
   IMAGE_NAME: ghcr.io/daki-l/xianyu2
 
 jobs:
+  migration-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source and history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check migration versions
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          base_sha="$BASE_SHA"
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            base_sha="$(git rev-parse "${HEAD_SHA}^")"
+          fi
+          bash scripts/ci/check-migration-versions.sh "$base_sha" "$HEAD_SHA"
+
   build:
+    needs: migration-check
     runs-on: ubuntu-latest
     permissions:
       contents: read
