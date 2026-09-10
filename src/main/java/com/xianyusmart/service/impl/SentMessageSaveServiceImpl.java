@@ -2,8 +2,8 @@ package com.xianyusmart.service.impl;
 
 import com.xianyusmart.context.UserContext;
 import com.xianyusmart.entity.XianyuChatMessage;
-import com.xianyusmart.mapper.XianyuChatMessageMapper;
 import com.xianyusmart.service.AccountService;
+import com.xianyusmart.service.ChatMessagePersistenceService;
 import com.xianyusmart.service.SentMessageSaveService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,7 +22,7 @@ import java.util.UUID;
 public class SentMessageSaveServiceImpl implements SentMessageSaveService {
     
     @Autowired
-    private XianyuChatMessageMapper chatMessageMapper;
+    private ChatMessagePersistenceService chatMessagePersistenceService;
     
     @Autowired
     private AccountService accountService;
@@ -111,7 +111,7 @@ public class SentMessageSaveServiceImpl implements SentMessageSaveService {
             message.setCompleteMsg(completeMsg);
             
             // 保存到数据库
-            int result = chatMessageMapper.insert(message);
+            int result = chatMessagePersistenceService.save(message);
             
             if (result > 0) {
                 log.info("【账号{}】[{}]消息入库成功: pnmId={}, cid={}, toId={}, xyGoodsId={}, text={}", 

@@ -10,6 +10,7 @@ import com.xianyusmart.controller.dto.MsgDTO;
 import com.xianyusmart.controller.dto.MsgListReqDTO;
 import com.xianyusmart.controller.dto.MsgListRespDTO;
 import com.xianyusmart.service.ChatMessageService;
+import com.xianyusmart.service.ChatMessagePersistenceService;
 import com.xianyusmart.service.PlatformHistoryMessageParser;
 import com.xianyusmart.service.WebSocketService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,6 +33,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     
     @Autowired
     private XianyuChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private ChatMessagePersistenceService chatMessagePersistenceService;
     
     @Autowired
     private XianyuAccountMapper accountMapper;
@@ -107,6 +111,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                     msgDTO.setSenderUserName(message.getSenderUserName());
                     msgDTO.setSenderUserId(message.getSenderUserId());
                     msgDTO.setMessageTime(message.getMessageTime());
+                    msgDTO.setMessageSource(message.getMessageSource());
+                    msgDTO.setReplyOrigin(message.getReplyOrigin());
                     msgDTOList.add(msgDTO);
                 }
             }
@@ -143,6 +149,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             if (accountMapper.selectById(reqDTO.getXianyuAccountId()) == null) {
                 return ResultObject.validateFailed("账号不存在或无权访问");
             }
+
+            chatMessagePersistenceService.reconcileSession(reqDTO.getXianyuAccountId(), reqDTO.getSid());
             
             int limit = reqDTO.getLimit() != null && reqDTO.getLimit() > 0
                     ? Math.min(reqDTO.getLimit(), 500) : 20;
@@ -164,6 +172,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                     msgDTO.setSenderUserName(message.getSenderUserName());
                     msgDTO.setSenderUserId(message.getSenderUserId());
                     msgDTO.setMessageTime(message.getMessageTime());
+                    msgDTO.setMessageSource(message.getMessageSource());
+                    msgDTO.setReplyOrigin(message.getReplyOrigin());
                     msgDTOList.add(msgDTO);
                 }
             }
@@ -181,7 +191,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         if (reqDTO.getXianyuAccountId() == null || reqDTO.getSid() == null || reqDTO.getSid().isBlank()) {
             return ResultObject.validateFailed("xianyuAccountId和sid不能为空");
         }
-        if (accountMapper.selectById(reqDTO.getXianyuAccountId()) == null) {
+        XianyuAccount account = accountMapper.selectById(reqDTO.getXianyuAccountId());
+        if (account == null) {
             return ResultObject.validateFailed("账号不存在或无权访问");
         }
         int maxMessages = reqDTO.getMaxMessages() == null ? 500
@@ -191,8 +202,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         List<XianyuChatMessage> messages = new PlatformHistoryMessageParser(objectMapper).parse(
                 reqDTO.getXianyuAccountId(), reqDTO.getSid(), history);
         int saved = 0;
+        String ownUserId = account.getUnb();
         for (XianyuChatMessage message : messages) {
-            chatMessageMapper.insert(message);
+            chatMessagePersistenceService.save(message, ownUserId);
             saved++;
         }
         return ResultObject.success(java.util.Map.of("received", history.size(), "saved", saved));

@@ -35,6 +35,13 @@ public class XianyuChatMessage {
     
     // 完整消息体
     private String completeMsg;            // 完整的消息体JSON
+
+    // 跨平台与本地发送记录的去重元数据
+    private String messageSource;          // PLATFORM、LOCAL 或 LOCAL_AI
+    private String dedupeFingerprint;      // 标准化正文指纹
+    private Long duplicateOfId;            // 重复记录对应的主记录ID
+    private Integer duplicateStatus;       // 0-主记录，1-重复记录
+    private String replyOrigin;            // 逻辑来源，例如 AI
     
     // 时间信息
     private Long messageTime;              // 消息时间戳（毫秒，字段1.5）

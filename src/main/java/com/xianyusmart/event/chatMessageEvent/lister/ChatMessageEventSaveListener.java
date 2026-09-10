@@ -4,6 +4,7 @@ import com.xianyusmart.entity.XianyuChatMessage;
 import com.xianyusmart.event.chatMessageEvent.ChatMessageData;
 import com.xianyusmart.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyusmart.mapper.XianyuChatMessageMapper;
+import com.xianyusmart.service.ChatMessagePersistenceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
@@ -29,6 +30,9 @@ public class ChatMessageEventSaveListener {
     
     @Autowired
     private XianyuChatMessageMapper chatMessageMapper;
+
+    @Autowired
+    private ChatMessagePersistenceService chatMessagePersistenceService;
     
     /**
      * 处理聊天消息接收事件 - 保存消息到数据库
@@ -58,7 +62,7 @@ public class ChatMessageEventSaveListener {
             }
             
             // 保存消息到数据库
-            int result = chatMessageMapper.insert(message);
+            int result = chatMessagePersistenceService.save(message);
             
             if (result > 0) {
                 log.info("【账号{}】[SaveListener]消息保存成功: pnmId={}, id={}", 

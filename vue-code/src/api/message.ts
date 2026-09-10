@@ -19,6 +19,8 @@ export interface ChatMessage {
   completeMsg: string;
   messageTime: string | number;
   createTime: string;
+  messageSource?: string;
+  replyOrigin?: string;
   isNew?: boolean;
 }
 

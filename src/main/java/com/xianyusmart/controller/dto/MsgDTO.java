@@ -52,5 +52,8 @@ public class MsgDTO {
      * 消息时间戳（毫秒）
      */
     private Long messageTime;
+
+    private String messageSource;
+    private String replyOrigin;
 }
 
