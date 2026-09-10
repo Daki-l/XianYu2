@@ -175,7 +175,8 @@ public interface XianyuChatMessageMapper {
             "WHERE xianyu_account_id = #{accountId} AND s_id = #{sid} " +
             "AND duplicate_status = 0 " +
             "AND ((message_source = 'PLATFORM' AND content_type = 1) " +
-            "OR (message_source = 'LOCAL_AI' AND content_type = 888)) " +
+            "OR (message_source = 'LOCAL_AI' AND content_type = 888) " +
+            "OR (message_source = 'LOCAL' AND content_type = 999)) " +
             "ORDER BY message_time ASC, id ASC")
     List<XianyuChatMessage> findSessionCrossSourceMessages(@Param("accountId") Long accountId,
                                                             @Param("sid") String sid);

@@ -13,6 +13,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,7 +33,7 @@ class ChatMessagePersistenceServiceTest {
     void setUp() {
         persistenceService = new ChatMessagePersistenceService(messageMapper, accountService);
         when(accountService.getXianyuUserId(1L)).thenReturn("own-user");
-        when(messageMapper.insert(any())).thenAnswer(invocation -> {
+        lenient().when(messageMapper.insert(any())).thenAnswer(invocation -> {
             XianyuChatMessage message = invocation.getArgument(0);
             if (message.getId() == null) {
                 message.setId(100L);
@@ -106,6 +107,72 @@ class ChatMessagePersistenceServiceTest {
 
         verify(messageMapper).markDuplicate(100L, 300L);
         verify(messageMapper).markAiReplyOrigin(300L);
+    }
+
+    @Test
+    void platformMessageWinsWhenThereIsOneMatchingLocalManualReply() {
+        XianyuChatMessage localManual = message(200L, 999, "own-user", 1_000L);
+        localManual.setMessageSource("LOCAL");
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL_AI", 888))
+                .thenReturn(List.of());
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL", 999))
+                .thenReturn(List.of(localManual));
+
+        XianyuChatMessage platform = message(null, 1, "own-user", 2_000L);
+        persistenceService.save(platform);
+
+        verify(messageMapper).markDuplicate(200L, 100L);
+        verify(messageMapper, never()).markAiReplyOrigin(any());
+    }
+
+    @Test
+    void localManualReplyIsMarkedWhenPlatformMessageWasSavedFirst() {
+        XianyuChatMessage platform = message(300L, 1, "own-user", 2_000L);
+        platform.setMessageSource("PLATFORM");
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "PLATFORM", 1))
+                .thenReturn(List.of(platform));
+
+        XianyuChatMessage localManual = message(null, 999, "own-user", 1_000L);
+        persistenceService.save(localManual);
+
+        verify(messageMapper).markDuplicate(100L, 300L);
+        verify(messageMapper, never()).markAiReplyOrigin(any());
+    }
+
+    @Test
+    void manualReplyDoesNotMatchWhenThePlatformMessageWasSentByAnotherUser() {
+        XianyuChatMessage platform = message(300L, 1, "buyer-user", 2_000L);
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "PLATFORM", 1))
+                .thenReturn(List.of(platform));
+
+        persistenceService.save(message(null, 999, "own-user", 1_000L));
+
+        verify(messageMapper, never()).markDuplicate(any(), any());
+    }
+
+    @Test
+    void sessionReconciliationHidesMatchingManualReply() {
+        XianyuChatMessage platform = message(300L, 1, "own-user", 2_000L);
+        platform.setMessageSource("PLATFORM");
+        XianyuChatMessage localManual = message(200L, 999, "own-user", 1_000L);
+        localManual.setMessageSource("LOCAL");
+        when(messageMapper.findSessionCrossSourceMessages(1L, "sid@goofish"))
+                .thenReturn(List.of(platform, localManual));
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL_AI", 888))
+                .thenReturn(List.of());
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL", 999))
+                .thenReturn(List.of(localManual));
+
+        persistenceService.reconcileSession(1L, "sid@goofish");
+
+        verify(messageMapper).markDuplicate(200L, 300L);
+        verify(messageMapper, never()).markAiReplyOrigin(any());
     }
 
     @Test
