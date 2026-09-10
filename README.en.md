@@ -20,28 +20,7 @@ The system does more than send a block of text after receiving an order. It conn
 
 Current version: [2.0.7](https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.7) · [View changelog](CHANGELOG.md)
 
-[Community & Support](#community--support) · [Benefits for Merchants](#benefits-for-merchants) · [Technical Highlights](#technical-highlights) · [Problems Solved](#problems-solved) · [Feature Scope](#feature-scope) · [Feature Entry Points & Setup Order](#feature-entry-points--setup-order) · [Business Workflow](#business-workflow) · [Technical Baseline](#technical-baseline) · [Container Image Deployment](#container-image-deployment) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Development Build](#development-build) · [Build & Verification](#build--verification) · [Directory Responsibilities](#directory-responsibilities) · [Routine Operations](#routine-operations) · [Usage Boundaries](#usage-boundaries) · [License & Disclaimer](#license--disclaimer) · [Star History](#star-history)
-
-## Community & Support
-
-Issues, experience, and suggestions from real-world use help make XianYuSmart more stable and easier to use. Join the WeChat group to discuss deployment configuration, connection troubleshooting, automated delivery, and operational practices. If the project saves time or solves a practical business problem, voluntary donations are also welcome to support ongoing maintenance.
-
-<table>
-  <tr>
-    <td width="50%" align="center" valign="top">
-      <strong>Join the WeChat Group</strong>
-      <p>Discuss configuration, troubleshooting, and practical experience with maintainers and users, and stay informed about project progress. Feature requests, shared practices, and project contributions are all welcome.</p>
-      <img src="docs/assets/community/wechat-group-qr.jpg" width="360" alt="XianYuSmart WeChat group QR code">
-      <p><sub>The QR code expires periodically and will be updated in the repository</sub></p>
-    </td>
-    <td width="50%" align="center" valign="top">
-      <strong>Support the Project</strong>
-      <p>Every contribution supports documentation improvements, compatibility verification, issue fixes, and continued maintenance. Any amount is an encouragement to keep the project moving forward.</p>
-      <img src="docs/assets/community/wechat-reward-qr.jpg" width="360" alt="XianYuSmart donation QR code">
-      <p><sub>Donations are entirely voluntary and do not include commercial services, feature priority, or any commitment</sub></p>
-    </td>
-  </tr>
-</table>
+[Benefits for Merchants](#benefits-for-merchants) · [Technical Highlights](#technical-highlights) · [Problems Solved](#problems-solved) · [Feature Scope](#feature-scope) · [Feature Entry Points & Setup Order](#feature-entry-points--setup-order) · [Business Workflow](#business-workflow) · [Technical Baseline](#technical-baseline) · [Container Image Deployment](#container-image-deployment) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Development Build](#development-build) · [Build & Verification](#build--verification) · [Directory Responsibilities](#directory-responsibilities) · [Routine Operations](#routine-operations) · [Usage Boundaries](#usage-boundaries) · [License & Disclaimer](#license--disclaimer) · [Star History](#star-history)
 
 ## Benefits for Merchants
 
