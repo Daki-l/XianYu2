@@ -13,10 +13,10 @@
 ### Task 1: 持久化账号风险护栏
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/RiskControlService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/RiskControlServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/constants/OperationConstants.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/impl/RiskControlServiceImplTest.java`
+- Modify: `src/main/java/com/xianyu2/service/RiskControlService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/RiskControlServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/constants/OperationConstants.java`
+- Temporary test: `src/test/java/com/xianyu2/service/impl/RiskControlServiceImplTest.java`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -64,8 +64,8 @@ $env:JAVA_HOME='E:\java\jdk21'
 ### Task 2: MTOP 公共入口接入熔断
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/utils/XianyuApiCallUtils.java`
-- Extend temporary test: `src/test/java/com/xianyusmart/service/impl/RiskControlServiceImplTest.java`
+- Modify: `src/main/java/com/xianyu2/utils/XianyuApiCallUtils.java`
+- Extend temporary test: `src/test/java/com/xianyu2/service/impl/RiskControlServiceImplTest.java`
 
 - [ ] **Step 1: 增加 API 分类失败测试**
 
@@ -104,12 +104,12 @@ riskControlService.recordResponse(accountId, responseMap);
 ### Task 3: 商品、评价和擦亮接入逻辑桶
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/PlatformPublishService.java`
-- Modify: `src/main/java/com/xianyusmart/service/GoodsAutomationService.java`
-- Modify: `src/main/java/com/xianyusmart/service/GoodsAutomationScheduler.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/MerchantTaskMapper.java`
-- Modify: `src/main/java/com/xianyusmart/service/MerchantOperationsService.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/GoodsAutomationRiskGuardTest.java`
+- Modify: `src/main/java/com/xianyu2/service/PlatformPublishService.java`
+- Modify: `src/main/java/com/xianyu2/service/GoodsAutomationService.java`
+- Modify: `src/main/java/com/xianyu2/service/GoodsAutomationScheduler.java`
+- Modify: `src/main/java/com/xianyu2/mapper/MerchantTaskMapper.java`
+- Modify: `src/main/java/com/xianyu2/service/MerchantOperationsService.java`
+- Temporary test: `src/test/java/com/xianyu2/service/GoodsAutomationRiskGuardTest.java`
 
 - [ ] **Step 1: 写自动评价被护栏阻止时不更新失败状态的测试**
 
@@ -158,8 +158,8 @@ int defer(@Param("id") Long id, @Param("retryAt") LocalDateTime retryAt,
 ### Task 4: 完整凭证更新解除熔断
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/impl/AccountServiceImpl.java`
-- Extend temporary test: `src/test/java/com/xianyusmart/service/impl/RiskControlServiceImplTest.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AccountServiceImpl.java`
+- Extend temporary test: `src/test/java/com/xianyu2/service/impl/RiskControlServiceImplTest.java`
 
 - [ ] **Step 1: 写完整更新解除、普通合并不解除的测试**
 
@@ -188,18 +188,18 @@ if (updated) {
 ### Task 5: 普通发货、小刀和人工确认发货持久化恢复
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/OrderService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/OrderServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/service/DeliveryTaskService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/DeliveryTaskServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/service/DeliveryTaskScheduler.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java`
-- Modify: `src/main/java/com/xianyusmart/service/MerchantOperationsService.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/MerchantTaskMapper.java`
-- Modify: `src/main/java/com/xianyusmart/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java`
-- Modify: `src/main/java/com/xianyusmart/controller/OrderController.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/DeliveryRiskGuardTest.java`
+- Modify: `src/main/java/com/xianyu2/service/OrderService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/OrderServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/DeliveryTaskService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/DeliveryTaskServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/DeliveryTaskScheduler.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java`
+- Modify: `src/main/java/com/xianyu2/service/MerchantOperationsService.java`
+- Modify: `src/main/java/com/xianyu2/mapper/MerchantTaskMapper.java`
+- Modify: `src/main/java/com/xianyu2/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java`
+- Modify: `src/main/java/com/xianyu2/controller/OrderController.java`
+- Temporary test: `src/test/java/com/xianyu2/service/DeliveryRiskGuardTest.java`
 
 - [ ] **Step 1: 写发货熔断时延后且不消耗失败次数的测试**
 
@@ -249,9 +249,9 @@ request = Map.of("orderId", orderId, "itemId", itemId, "buyerId", buyerId);
 ### Task 6: 连接管理实时展示
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/MerchantTaskMapper.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
+- Modify: `src/main/java/com/xianyu2/mapper/MerchantTaskMapper.java`
+- Modify: `src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java`
 - Modify: `vue-code/src/api/websocket.ts`
 - Modify: `vue-code/src/views/connection/useConnectionManager.ts`
 - Modify: `vue-code/src/views/connection/ConnectionDetail.vue`
@@ -296,7 +296,7 @@ const riskRemainingSeconds = computed(() =>
 - [ ] **Step 4: 执行前端类型检查和正式构建**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend
 ```
 
 ### Task 7: 清理临时测试并完成全量验证
@@ -307,21 +307,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xia
 - [ ] **Step 1: 删除本次临时测试文件**
 
 ```text
-src/test/java/com/xianyusmart/service/impl/RiskControlServiceImplTest.java
-src/test/java/com/xianyusmart/service/GoodsAutomationRiskGuardTest.java
-src/test/java/com/xianyusmart/service/DeliveryRiskGuardTest.java
+src/test/java/com/xianyu2/service/impl/RiskControlServiceImplTest.java
+src/test/java/com/xianyu2/service/GoodsAutomationRiskGuardTest.java
+src/test/java/com/xianyu2/service/DeliveryRiskGuardTest.java
 ```
 
 - [ ] **Step 2: 确认正式代码不依赖临时测试后运行 Java 21 全量测试**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 - [ ] **Step 3: 构建一次部署产物**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task package
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task package
 ```
 
 - [ ] **Step 4: 审查只包含本次范围的差异**
@@ -351,6 +351,6 @@ git commit -m "feat: add platform risk guard"
 git push origin main
 ```
 
-- [ ] **Step 3: 使用 `updating-xianyusmart` 的 `-SkipBuild` 路径部署已验证产物**
+- [ ] **Step 3: 使用 `updating-xianyu2` 的 `-SkipBuild` 路径部署已验证产物**
 
 - [ ] **Step 4: 生产验收连接状态、读取、非时效限流、订单履约等待恢复和 Cookie 解除熔断；任何一项失败立即按更新技能回滚。**

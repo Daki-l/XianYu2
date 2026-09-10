@@ -1,10 +1,9 @@
-# XianYuSmart
+# XianYu2
 
 [English](README.en.md) | **简体中文**
 
-[![Stars](https://img.shields.io/github/stars/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/stargazers)
-[![Forks](https://img.shields.io/github/forks/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/forks)
-[![Release](https://img.shields.io/github/v/release/Evvvvvvvan/XianYuSmart?display_name=tag&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/releases/latest)
+[![Stars](https://img.shields.io/github/stars/Daki-l/XianYu2?style=flat&color=2f6f5e)](https://github.com/Daki-l/XianYu2/stargazers)
+[![Forks](https://img.shields.io/github/forks/Daki-l/XianYu2?style=flat&color=2f6f5e)](https://github.com/Daki-l/XianYu2/forks)
 [![Star History](https://img.shields.io/badge/Star%20History-View%20Growth-2f6f5e)](#star-history)
 [![Java 21](https://img.shields.io/badge/Java-21-2f6f5e)](https://www.oracle.com/java/technologies/downloads/#java21)
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-2f6f5e)](https://spring.io/projects/spring-boot)
@@ -14,17 +13,17 @@
 
 > **让虚拟商品从下单、交付、答疑到评价尽量自动完成；正常订单无需盯守，异常订单集中处理。**
 
-XianYuSmart 是一个面向多租户场景的闲鱼虚拟商品运营系统。买家下单后，平台可以按商品自动交付固定资源或卡密，通过发货凭证、私聊或两种通道完成触达；成交前后的常见咨询、收货引导和评价跟进也能按规则自动处理。商家只需关注低库存、账号掉线、发送失败和待复核等真正需要介入的事项。
+XianYu2 是一个面向多租户场景的闲鱼虚拟商品运营系统。买家下单后，平台可以按商品自动交付固定资源或卡密，通过发货凭证、私聊或两种通道完成触达；成交前后的常见咨询、收货引导和评价跟进也能按规则自动处理。商家只需关注低库存、账号掉线、发送失败和待复核等真正需要介入的事项。
 
 它不只是在收到订单后发送一段文本，而是把 **订单发现、幂等入队、库存预占、双通道交付、失败重试和人工复核** 串成可恢复的完整链路。固定内容与卡密两种交付模式严格互斥，账号、商品、消息、订单、库存、任务和 AI 知识库按租户隔离。核心任务链路只依赖 MySQL，不强制引入 Redis 或消息队列，兼顾部署成本与后续扩展。
 
-当前版本：[2.0.7](https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.7) · [查看更新日志](CHANGELOG.md)
+当前版本：2.0.7 · [查看更新日志](CHANGELOG.md)
 
 [商家能得到什么](#商家能得到什么) · [技术亮点](#技术亮点) · [解决的问题](#解决的问题) · [能力范围](#能力范围) · [功能入口与使用顺序](#功能入口与使用顺序) · [业务流程](#业务流程) · [技术基线](#技术基线) · [镜像部署](#镜像部署) · [快速启动](#快速启动) · [配置说明](#配置说明) · [开发构建](#开发构建) · [构建与验证](#构建与验证) · [目录与职责](#目录与职责) · [日常运维](#日常运维) · [使用边界](#使用边界) · [许可证与免责声明](#许可证与免责声明) · [Star History](#star-history)
 
 ## 商家能得到什么
 
-| 使用场景 | XianYuSmart 自动完成 | 直接效果 |
+| 使用场景 | XianYu2 自动完成 | 直接效果 |
 | --- | --- | --- |
 | 出售网盘链接、教程或固定资源 | 复用固定内容模板，自动替换会员名称、订单号和发货内容 | 不需要为每笔订单重复复制粘贴 |
 | 出售激活码、兑换码或会员卡 | 按订单数量预占卡密，交付成功后核销并记录去向 | 降低重复发卡、少发和库存对不上的概率 |
@@ -276,14 +275,14 @@ docker compose --profile proxy up -d --build
 
 | 变量 | 说明 | 推荐值 |
 | --- | --- | --- |
-| `DB_NAME` | MySQL 数据库名 | `xianyusmart` |
+| `DB_NAME` | MySQL 数据库名 | `xianyu2` |
 | `DB_USERNAME` | 业务数据库账号 | 独立低权限账号 |
 | `DB_PASSWORD` | 业务数据库密码 | 随机强密码 |
 | `DB_ROOT_PASSWORD` | MySQL root 密码 | 与业务密码不同 |
 | `JWT_SECRET` | 登录令牌签名密钥 | 48 字节以上随机值 |
 | `ALLOWED_ORIGINS` | 允许访问的前端来源 | 完整 HTTPS 域名 |
 | `TRUST_PROXY` | 是否信任代理头 | 仅 Nginx 部署设为 `true` |
-| `UPDATE_RELEASE_API` | GitHub 发行版 API | 默认使用本项目最新 Release，留空可关闭更新检查 |
+| `UPDATE_RELEASE_API` | GitHub 发行版 API | 可选；配置有效 Release 地址后启用更新检查 |
 | `DB_POOL_MAX_SIZE` | 最大数据库连接数 | 单实例默认 `10` |
 | `DB_POOL_MIN_IDLE` | 最小空闲连接数 | 默认 `2` |
 | `JAVA_OPTS` | JVM 容器内存策略 | 默认值适合小型实例 |
@@ -310,9 +309,9 @@ docker compose --profile proxy up -d --build
 准备 Java 21、Node.js 20+、MySQL 5.7+，然后创建数据库和账号：
 
 ```sql
-CREATE DATABASE xianyusmart CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'xianyusmart'@'localhost' IDENTIFIED BY 'replace-with-strong-password';
-GRANT ALL PRIVILEGES ON xianyusmart.* TO 'xianyusmart'@'localhost';
+CREATE DATABASE xianyu2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'xianyu2'@'localhost' IDENTIFIED BY 'replace-with-strong-password';
+GRANT ALL PRIVILEGES ON xianyu2.* TO 'xianyu2'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
@@ -351,7 +350,7 @@ Linux 将 `mvnw.cmd` 替换为 `./mvnw`。
 ## 目录与职责
 
 ```text
-src/main/java/com/xianyusmart/
+src/main/java/com/xianyu2/
 ├─ controller/          HTTP 接口与工作台聚合
 ├─ service/             账号、消息、回复、发货、运营编排和持久化任务
 ├─ service/delivery/    文本与卡密交付策略
@@ -396,7 +395,7 @@ docker compose up -d --build
 备份 MySQL：
 
 ```bash
-docker compose exec mysql mysqldump -uxianyusmart -p xianyusmart > xianyusmart.sql
+docker compose exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
 ```
 
 恢复前应先停止应用写入并验证备份文件。业务数据导出不包含 Cookie、AI Key、邮箱密码等敏感配置，灾备流程需单独保存运行环境变量和证书。
@@ -424,7 +423,7 @@ docker compose exec mysql mysqldump -uxianyusmart -p xianyusmart > xianyusmart.s
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history-dark.png" />
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history-light.png" />
-    <img alt="XianYuSmart Star History Chart" src="docs/assets/star-history-light.png" width="100%" />
+    <img alt="XianYu2 Star History Chart" src="docs/assets/star-history-light.png" width="100%" />
   </picture>
 </a>
 <sub>由 <a href="scripts/gen_star_history.py"><code>scripts/gen_star_history.py</code></a> 生成，<a href=".github/workflows/star-history.yml">GitHub Actions</a> 每日自动更新 · 点击图片查看大图</sub>

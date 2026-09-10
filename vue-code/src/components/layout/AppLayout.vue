@@ -110,7 +110,7 @@ const pageIconMap: Record<string, any> = {
   '/qrlogin': markRaw(IconWifi)
 }
 
-const currentPageTitle = computed(() => String(route.meta.title || pageTitleMap[route.path] || 'XianYuSmart'))
+const currentPageTitle = computed(() => String(route.meta.title || pageTitleMap[route.path] || 'XianYu2'))
 const currentPageIcon = computed(() => pageIconMap[route.path] || (route.path.startsWith('/connection/') ? pageIconMap['/connection'] : null))
 const pageReadOnly = computed(() =>
   !!route.meta.writePermission && !hasPermission(String(route.meta.writePermission))
@@ -208,7 +208,7 @@ onUnmounted(() => {
             <div class="logo" :class="{ 'is-update-entry': isAdmin }" @click="openUpdateDialog">
               <div class="logo-icon">X</div>
               <div class="logo-text-wrap">
-                <div class="logo-text">XianYuSmart</div>
+                <div class="logo-text">XianYu2</div>
                 <div class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }">
                   v{{ currentVersion }}
                   <span v-if="isAdmin && hasNewVersion" class="update-dot"></span>
@@ -232,7 +232,7 @@ onUnmounted(() => {
         <div class="logo" :class="{ 'is-update-entry': isAdmin }" @click="openUpdateDialog">
           <div class="logo-icon">X</div>
           <div class="logo-text-wrap">
-            <div class="logo-text">XianYuSmart</div>
+            <div class="logo-text">XianYu2</div>
             <div class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }">
               v{{ currentVersion }}
               <span v-if="isAdmin && hasNewVersion" class="update-dot"></span>

@@ -1885,7 +1885,7 @@ async function saveMenuLayout() {
 
         <!-- 产品定位 -->
         <div class="settings__section">
-          <div class="settings__section-title">XianYuSmart</div>
+          <div class="settings__section-title">XianYu2</div>
           <p class="settings__desc">单商家私有化的闲鱼虚拟商品经营系统，聚焦卡密库存、可恢复发货、客服自动化和异常待办。</p>
         </div>
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""生成 XianYuSmart 的浅色与深色 Star History 趋势图。"""
+"""生成 XianYu2 的浅色与深色 Star History 趋势图。"""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, to_rgba
 from matplotlib.ticker import FuncFormatter
 
-REPO = "Evvvvvvvan/XianYuSmart"
+REPO = "Daki-l/XianYu2"
 START_DATE = "2026-07-14"
 CACHE = Path(__file__).with_name(".star-history-cache.json")
 
@@ -87,7 +87,7 @@ def fetch_starred_at(repo: str, refresh: bool) -> list[str]:
     headers = {
         "Accept": "application/vnd.github.star+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "xianyusmart-star-history",
+        "User-Agent": "xianyu2-star-history",
     }
     if token := get_token():
         headers["Authorization"] = f"Bearer {token}"

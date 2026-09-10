@@ -188,8 +188,8 @@ Expected: 提交只包含工作流与计划文档。
 Run:
 
 ```powershell
-gh api --method PUT repos/Evvvvvvvan/XianYuSmart/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
-gh api repos/Evvvvvvvan/XianYuSmart/actions/permissions/workflow
+gh api --method PUT repos/Daki-l/XianYu2/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+gh api repos/Daki-l/XianYu2/actions/permissions/workflow
 ```
 
 Expected: `default_workflow_permissions` 为 `read`，`can_approve_pull_request_reviews` 为 `true`。
@@ -227,8 +227,8 @@ Run:
 ```powershell
 gh run view $run.databaseId --json conclusion,status,url,headSha,jobs
 gh pr list --base main --head automation/star-history --state all --limit 1 --json number,state,mergedAt,url
-gh api repos/Evvvvvvvan/XianYuSmart/branches/main/protection
-gh api repos/Evvvvvvvan/XianYuSmart/git/ref/heads/automation/star-history
+gh api repos/Daki-l/XianYu2/branches/main/protection
+gh api repos/Daki-l/XianYu2/git/ref/heads/automation/star-history
 ```
 
 Expected:

@@ -48,7 +48,7 @@ docker compose up -d --build
 docker compose ps
 
 echo
-echo "XianYuSmart 已启动: http://localhost:12400"
+echo "XianYu2 已启动: http://localhost:12400"
 if [ -n "$BOOTSTRAP_ADMIN_PASSWORD" ]; then
     echo "初始管理员: admin"
     echo "初始密码: $BOOTSTRAP_ADMIN_PASSWORD"

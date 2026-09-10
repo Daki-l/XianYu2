@@ -13,8 +13,8 @@
 ### Task 1: Cookie 账号标识解析与规范化
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/utils/XianyuSignUtils.java`
-- Temporary Test: `src/test/java/com/xianyusmart/utils/XianyuSignUtilsCookieUserIdTest.java`
+- Modify: `src/main/java/com/xianyu2/utils/XianyuSignUtils.java`
+- Temporary Test: `src/test/java/com/xianyu2/utils/XianyuSignUtilsCookieUserIdTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -22,7 +22,7 @@
 
 - [ ] **Step 2: 验证测试按预期失败**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test -Test XianyuSignUtilsCookieUserIdTest`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test -Test XianyuSignUtilsCookieUserIdTest`
 
 Expected: FAIL，缺少 `extractUserId` 或 `normalizeCookieUserId`。
 
@@ -39,16 +39,16 @@ public static String normalizeCookieUserId(String cookieText, String userId)
 
 - [ ] **Step 4: 验证测试通过**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test -Test XianyuSignUtilsCookieUserIdTest`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test -Test XianyuSignUtilsCookieUserIdTest`
 
 Expected: PASS。
 
 ### Task 2: 接入所有凭证保存入口
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
-- Modify: `src/main/java/com/xianyusmart/controller/AccountController.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
+- Modify: `src/main/java/com/xianyu2/controller/AccountController.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
 
 - [ ] **Step 1: 替换重复提取逻辑**
 
@@ -63,7 +63,7 @@ String normalizedCookie = XianyuSignUtils.normalizeCookieUserId(cookieText, unb)
 
 - [ ] **Step 2: 运行后端验证**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test`
 
 Expected: BUILD SUCCESS，Java 21。
 
@@ -95,20 +95,20 @@ const continueCookiePaste = () => {
 
 - [ ] **Step 3: 运行前端正式验证**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend`
 
 Expected: 类型检查和 Vite 正式构建成功。
 
 ### Task 4: 清理、回归与交付
 
 **Files:**
-- Delete: `src/test/java/com/xianyusmart/utils/XianyuSignUtilsCookieUserIdTest.java`
+- Delete: `src/test/java/com/xianyu2/utils/XianyuSignUtilsCookieUserIdTest.java`
 
 - [ ] **Step 1: 删除临时测试并重新验证**
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test`
 
-Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend`
+Run: `powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend`
 
 Expected: 两项均成功，正式代码不依赖临时测试。
 

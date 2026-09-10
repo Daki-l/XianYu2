@@ -43,7 +43,7 @@ RUN --mount=type=cache,target=/root/.m2/repository ./mvnw dependency:build-class
 # 阶段3: 运行时镜像
 FROM eclipse-temurin:21-jre-jammy
 
-LABEL org.opencontainers.image.title="XianYuSmart"
+LABEL org.opencontainers.image.title="XianYu2"
 LABEL org.opencontainers.image.description="多租户闲鱼虚拟商品运营平台"
 LABEL org.opencontainers.image.version="2.0.7"
 LABEL org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0"
@@ -61,13 +61,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # 创建低权限运行用户和数据目录
-RUN groupadd --system xianyusmart && useradd --system --gid xianyusmart --home-dir /app xianyusmart \
+RUN groupadd --system xianyu2 && useradd --system --gid xianyu2 --home-dir /app xianyu2 \
     && mkdir -p /app/data /app/logs \
-    && chown -R xianyusmart:xianyusmart /app
+    && chown -R xianyu2:xianyu2 /app
 
 # 从构建阶段复制 JAR
-COPY --from=backend-build --chown=xianyusmart:xianyusmart /app/target/xianyusmart-2.0.7.jar app.jar
-COPY --from=backend-build --chown=xianyusmart:xianyusmart /ms-playwright /app/ms-playwright
+COPY --from=backend-build --chown=xianyu2:xianyu2 /app/target/xianyu2-2.0.7.jar app.jar
+COPY --from=backend-build --chown=xianyu2:xianyu2 /ms-playwright /app/ms-playwright
 
 # 暴露端口
 EXPOSE 12400
@@ -78,7 +78,7 @@ ENV SERVER_PORT=12400
 ENV PLAYWRIGHT_BROWSERS_PATH=/app/ms-playwright
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
-USER xianyusmart
+USER xianyu2
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
   CMD wget -q -O /dev/null http://127.0.0.1:12400/actuator/health || exit 1

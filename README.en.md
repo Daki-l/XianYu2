@@ -1,10 +1,9 @@
-# XianYuSmart
+# XianYu2
 
 **English** | [简体中文](README.md)
 
-[![Stars](https://img.shields.io/github/stars/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/stargazers)
-[![Forks](https://img.shields.io/github/forks/Evvvvvvvan/XianYuSmart?style=flat&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/forks)
-[![Release](https://img.shields.io/github/v/release/Evvvvvvvan/XianYuSmart?display_name=tag&color=2f6f5e)](https://github.com/Evvvvvvvan/XianYuSmart/releases/latest)
+[![Stars](https://img.shields.io/github/stars/Daki-l/XianYu2?style=flat&color=2f6f5e)](https://github.com/Daki-l/XianYu2/stargazers)
+[![Forks](https://img.shields.io/github/forks/Daki-l/XianYu2?style=flat&color=2f6f5e)](https://github.com/Daki-l/XianYu2/forks)
 [![Star History](https://img.shields.io/badge/Star%20History-View%20Growth-2f6f5e)](#star-history)
 [![Java 21](https://img.shields.io/badge/Java-21-2f6f5e)](https://www.oracle.com/java/technologies/downloads/#java21)
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-2f6f5e)](https://spring.io/projects/spring-boot)
@@ -14,17 +13,17 @@
 
 > **Automate virtual product ordering, delivery, support, and reviews as much as possible. Routine orders run unattended while exceptions are handled in one place.**
 
-XianYuSmart is a virtual product operations system for Xianyu in multi-tenant environments. After a buyer places an order, the platform can automatically deliver fixed resources or card keys based on the product and reach the buyer through delivery credentials, private chat, or both channels. Common inquiries, receipt guidance, and review follow-ups before and after a transaction can also be handled automatically according to configured rules. Merchants only need to focus on cases that genuinely require attention, such as low inventory, disconnected accounts, delivery failures, and pending reviews.
+XianYu2 is a virtual product operations system for Xianyu in multi-tenant environments. After a buyer places an order, the platform can automatically deliver fixed resources or card keys based on the product and reach the buyer through delivery credentials, private chat, or both channels. Common inquiries, receipt guidance, and review follow-ups before and after a transaction can also be handled automatically according to configured rules. Merchants only need to focus on cases that genuinely require attention, such as low inventory, disconnected accounts, delivery failures, and pending reviews.
 
 The system does more than send a block of text after receiving an order. It connects **order discovery, idempotent queuing, inventory reservation, dual-channel delivery, failure retries, and manual review** into a complete recoverable workflow. Fixed content and card-key delivery modes are strictly mutually exclusive, while accounts, products, messages, orders, inventory, tasks, and AI knowledge bases are isolated by tenant. Core task workflows rely only on MySQL, without requiring Redis or a message queue, balancing deployment cost with future extensibility.
 
-Current version: [2.0.7](https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.7) · [View changelog](CHANGELOG.md)
+Current version: 2.0.7 · [View changelog](CHANGELOG.md)
 
 [Benefits for Merchants](#benefits-for-merchants) · [Technical Highlights](#technical-highlights) · [Problems Solved](#problems-solved) · [Feature Scope](#feature-scope) · [Feature Entry Points & Setup Order](#feature-entry-points--setup-order) · [Business Workflow](#business-workflow) · [Technical Baseline](#technical-baseline) · [Container Image Deployment](#container-image-deployment) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Development Build](#development-build) · [Build & Verification](#build--verification) · [Directory Responsibilities](#directory-responsibilities) · [Routine Operations](#routine-operations) · [Usage Boundaries](#usage-boundaries) · [License & Disclaimer](#license--disclaimer) · [Star History](#star-history)
 
 ## Benefits for Merchants
 
-| Scenario | What XianYuSmart Automates | Direct Benefit |
+| Scenario | What XianYu2 Automates | Direct Benefit |
 | --- | --- | --- |
 | Selling cloud-drive links, tutorials, or other fixed resources | Reuses fixed-content templates and automatically substitutes member names, order numbers, and delivery content | No repeated copy-and-paste for every order |
 | Selling activation codes, redemption codes, or membership cards | Reserves card keys according to order quantity, then consumes them and records their destination after successful delivery | Reduces duplicate keys, missing keys, and inventory discrepancies |
@@ -276,14 +275,14 @@ Copy `.env.example` to `.env`, then update it for the environment:
 
 | Variable | Description | Recommended Value |
 | --- | --- | --- |
-| `DB_NAME` | MySQL database name | `xianyusmart` |
+| `DB_NAME` | MySQL database name | `xianyu2` |
 | `DB_USERNAME` | Application database account | Dedicated least-privilege account |
 | `DB_PASSWORD` | Application database password | Random strong password |
 | `DB_ROOT_PASSWORD` | MySQL root password | Different from the application password |
 | `JWT_SECRET` | Login token signing secret | At least 48 random bytes |
 | `ALLOWED_ORIGINS` | Frontend origins allowed to access the application | Complete HTTPS domain |
 | `TRUST_PROXY` | Whether proxy headers are trusted | Set to `true` only behind Nginx |
-| `UPDATE_RELEASE_API` | GitHub Releases API | Uses this project's latest Release by default; leave empty to disable update checks |
+| `UPDATE_RELEASE_API` | GitHub Releases API | Optional; set a valid Release URL to enable update checks |
 | `DB_POOL_MAX_SIZE` | Maximum database connections | Default `10` for a single instance |
 | `DB_POOL_MIN_IDLE` | Minimum idle connections | Default `2` |
 | `JAVA_OPTS` | JVM container memory policy | Default value is suitable for small instances |
@@ -310,9 +309,9 @@ Before increasing concurrency, evaluate Xianyu API rate limits, active tenant co
 Prepare Java 21, Node.js 20+, and MySQL 5.7+, then create the database and account:
 
 ```sql
-CREATE DATABASE xianyusmart CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'xianyusmart'@'localhost' IDENTIFIED BY 'replace-with-strong-password';
-GRANT ALL PRIVILEGES ON xianyusmart.* TO 'xianyusmart'@'localhost';
+CREATE DATABASE xianyu2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'xianyu2'@'localhost' IDENTIFIED BY 'replace-with-strong-password';
+GRANT ALL PRIVILEGES ON xianyu2.* TO 'xianyu2'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
@@ -351,7 +350,7 @@ On Linux, replace `mvnw.cmd` with `./mvnw`.
 ## Directory Responsibilities
 
 ```text
-src/main/java/com/xianyusmart/
+src/main/java/com/xianyu2/
 ├─ controller/          HTTP APIs and workspace aggregation
 ├─ service/             Account, message, reply, delivery, operations orchestration, and persistent tasks
 ├─ service/delivery/    Text and card-key delivery strategies
@@ -396,7 +395,7 @@ docker compose up -d --build
 Back up MySQL:
 
 ```bash
-docker compose exec mysql mysqldump -uxianyusmart -p xianyusmart > xianyusmart.sql
+docker compose exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
 ```
 
 Stop application writes and verify the backup file before restoring. Business data exports do not include sensitive configuration such as cookies, AI keys, or email passwords. Runtime environment variables and certificates must be preserved separately for disaster recovery.
@@ -424,7 +423,7 @@ Downloading, copying, modifying, deploying, running, or distributing this projec
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history-dark.png" />
     <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history-light.png" />
-    <img alt="XianYuSmart Star History Chart" src="docs/assets/star-history-light.png" width="100%" />
+    <img alt="XianYu2 Star History Chart" src="docs/assets/star-history-light.png" width="100%" />
   </picture>
 </a>
 <sub>Generated by <a href="scripts/gen_star_history.py"><code>scripts/gen_star_history.py</code></a> and updated daily by <a href=".github/workflows/star-history.yml">GitHub Actions</a> · Click the image to view it at full size</sub>

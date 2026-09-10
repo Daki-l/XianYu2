@@ -8,10 +8,10 @@
         <version>3.5.7</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
-    <groupId>com.xianyusmart</groupId>
-    <artifactId>xianyusmart</artifactId>
+    <groupId>com.xianyu2</groupId>
+    <artifactId>xianyu2</artifactId>
     <version>2.0.7</version>
-    <name>XianYuSmart</name>
+    <name>XianYu2</name>
     <description>多租户闲鱼虚拟商品运营与自动交付系统</description>
     <url/>
     <licenses>

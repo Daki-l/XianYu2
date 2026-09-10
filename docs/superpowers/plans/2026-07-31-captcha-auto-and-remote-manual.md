@@ -12,31 +12,31 @@
 
 ## 文件结构
 
-- Modify: `src/main/java/com/xianyusmart/service/CaptchaSolveService.java`
+- Modify: `src/main/java/com/xianyu2/service/CaptchaSolveService.java`
   - 定义人工画面、轨迹点和服务方法。
-- Modify: `src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java`
   - 定义浏览器执行器的人工画面读取和轨迹提交契约。
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
   - 实现无桌面人工模式、内存截图、轨迹队列、自动加载态和刮刮乐识别。
-- Modify: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
   - 校验人工任务状态，转发画面和轨迹，细化凭证复验进度及失败原因。
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
   - 增加人工画面和轨迹接口并复用租户归属校验。
 - Modify: `vue-code/src/api/websocket.ts`
   - 增加人工画面、轨迹类型和 API。
 - Modify: `vue-code/src/views/connection/components/CaptchaGuideDialog.vue`
   - 显示服务器浏览器画面，记录 Pointer Events 轨迹并提交。
-- Temporary Test: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
+- Temporary Test: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
   - 只在 TDD 阶段存在，验证轨迹和画面会话规则，完成后删除。
-- Temporary Test: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveManualTempTest.java`
+- Temporary Test: `src/test/java/com/xianyu2/service/impl/CaptchaSolveManualTempTest.java`
   - 只在 TDD 阶段存在，验证任务状态和复验原因，完成后删除。
 
 ### Task 1: 定义人工交互契约
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/CaptchaSolveService.java`
-- Modify: `src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java`
-- Test: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveManualTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/CaptchaSolveService.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java`
+- Test: `src/test/java/com/xianyu2/service/impl/CaptchaSolveManualTempTest.java`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -60,7 +60,7 @@ void manualInteractionRequiresActiveManualTask() {
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 编译失败，提示 `ManualDrag`、`DragPoint` 或 `submitManualDrag` 尚不存在。
@@ -102,7 +102,7 @@ default void submitManualDrag(Long accountId, CaptchaSolveService.ManualDrag dra
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 接口编译通过；测试继续因服务尚未实现人工任务校验而失败。
@@ -110,8 +110,8 @@ Expected: 接口编译通过；测试继续因服务尚未实现人工任务校�
 ### Task 2: 实现浏览器内存画面和人工轨迹队列
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Test: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Test: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -138,7 +138,7 @@ void scratchCaptchaUsesPartialTrackDistance() {
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 编译失败，提示人工轨迹校验和刮刮乐距离方法不存在。
@@ -231,7 +231,7 @@ if (drag != null) {
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 人工轨迹校验和刮刮乐距离测试通过。
@@ -239,9 +239,9 @@ Expected: 人工轨迹校验和刮刮乐距离测试通过。
 ### Task 3: 补齐自动识别与平台复验原因
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
-- Test: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveManualTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
+- Test: `src/test/java/com/xianyu2/service/impl/CaptchaSolveManualTempTest.java`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -264,7 +264,7 @@ void platformStillRequiresCaptchaIsNotReportedAsReconnectFailure() {
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 当前实现只返回“凭证更新或重新连接失败”。
@@ -322,7 +322,7 @@ complete(control, Status.FAILED,
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: 加载态、刮刮乐距离和平台复验原因测试通过。
@@ -330,8 +330,8 @@ Expected: 加载态、刮刮乐距离和平台复验原因测试通过。
 ### Task 4: 增加租户受控的人工交互接口
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
 
 - [ ] **Step 1: 实现服务状态校验**
 
@@ -394,7 +394,7 @@ public ResultObject<CaptchaSolveService.TaskView> submitCaptchaManualDrag(...)
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: Java 21 测试通过。
@@ -511,7 +511,7 @@ VALIDATING_CREDENTIAL: '确认平台凭证'
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task frontend
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task frontend
 ```
 
 Expected: TypeScript 检查与生产构建通过。
@@ -519,8 +519,8 @@ Expected: TypeScript 检查与生产构建通过。
 ### Task 6: 删除临时测试并执行正式验证
 
 **Files:**
-- Delete: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
-- Delete: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveManualTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaManualSessionTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/impl/CaptchaSolveManualTempTest.java`
 
 - [ ] **Step 1: 删除本次临时测试**
 
@@ -531,7 +531,7 @@ Expected: TypeScript 检查与生产构建通过。
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task test
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task test
 ```
 
 Expected: Java 21 测试通过。
@@ -541,7 +541,7 @@ Expected: Java 21 测试通过。
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task frontend
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task frontend
 ```
 
 Expected: TypeScript 检查和生产构建通过。
@@ -564,7 +564,7 @@ Expected: 无空白错误、无凭据、无临时测试，只包含本次文件�
 Run:
 
 ```powershell
-& '.\.agents\skills\operating-xianyusmart\scripts\project.ps1' -Task package
+& '.\.agents\skills\operating-xianyu2\scripts\project.ps1' -Task package
 ```
 
 Expected: Java 21 正式 JAR 构建成功，后续部署复用同一产物。
@@ -577,7 +577,7 @@ Expected: Java 21 正式 JAR 构建成功，后续部署复用同一产物。
 - [ ] **Step 1: 提交并推送**
 
 ```powershell
-git add -- src/main/java/com/xianyusmart/service/CaptchaSolveService.java src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java src/main/java/com/xianyusmart/controller/WebSocketController.java vue-code/src/api/websocket.ts vue-code/src/views/connection/components/CaptchaGuideDialog.vue docs/superpowers/plans/2026-07-31-captcha-auto-and-remote-manual.md
+git add -- src/main/java/com/xianyu2/service/CaptchaSolveService.java src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java src/main/java/com/xianyu2/controller/WebSocketController.java vue-code/src/api/websocket.ts vue-code/src/views/connection/components/CaptchaGuideDialog.vue docs/superpowers/plans/2026-07-31-captcha-auto-and-remote-manual.md
 git commit -m "feat: close captcha verification loop"
 git push origin main
 ```
@@ -586,7 +586,7 @@ Expected: 不提交 `README.md` 和 `DISCLAIMER.md`。
 
 - [ ] **Step 2: 使用部署 Skill 复用已验证 JAR**
 
-部署前完整读取 `updating-xianyusmart`，使用其 `-SkipBuild` 路径上传本次已验证产物、备份旧 JAR、滚动重启并检查健康状态。
+部署前完整读取 `updating-xianyu2`，使用其 `-SkipBuild` 路径上传本次已验证产物、备份旧 JAR、滚动重启并检查健康状态。
 
 - [ ] **Step 3: 生产全自动验收**
 

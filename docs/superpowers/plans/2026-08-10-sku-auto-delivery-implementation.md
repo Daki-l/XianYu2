@@ -12,24 +12,24 @@
 
 ## 文件结构
 
-- 修改 `src/main/java/com/xianyusmart/service/GoodsSkuService.java`：增加账号隔离查询、计数和精确 SKU 查询接口。
-- 修改 `src/main/java/com/xianyusmart/service/impl/GoodsSkuServiceImpl.java`：实现账号与商品联合条件。
-- 修改 `src/main/java/com/xianyusmart/controller/GoodsSkuController.java`：SKU 列表和详情接收账号 ID。
-- 修改 `src/main/java/com/xianyusmart/service/impl/AutoDeliveryConfigServiceImpl.java`：保存时校验 SKU 归属，查询时禁止指定 SKU 回退。
-- 修改 `src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java`：多规格订单严格匹配 SKU 配置。
+- 修改 `src/main/java/com/xianyu2/service/GoodsSkuService.java`：增加账号隔离查询、计数和精确 SKU 查询接口。
+- 修改 `src/main/java/com/xianyu2/service/impl/GoodsSkuServiceImpl.java`：实现账号与商品联合条件。
+- 修改 `src/main/java/com/xianyu2/controller/GoodsSkuController.java`：SKU 列表和详情接收账号 ID。
+- 修改 `src/main/java/com/xianyu2/service/impl/AutoDeliveryConfigServiceImpl.java`：保存时校验 SKU 归属，查询时禁止指定 SKU 回退。
+- 修改 `src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java`：多规格订单严格匹配 SKU 配置。
 - 修改 `vue-code/src/api/auto-delivery-config.ts`：SKU 请求携带账号 ID。
 - 修改 `vue-code/src/views/auto-delivery/useAutoDelivery.ts`：SKU 状态、配置进度、错误重试和未保存保护。
 - 修改 `vue-code/src/views/auto-delivery/index.vue`：完整规格选择 UI。
 - 修改 `vue-code/src/views/auto-delivery/auto-delivery.css`：桌面和移动端布局。
-- 临时创建 `src/test/java/com/xianyusmart/service/impl/GoodsSkuServiceImplTempTest.java`、`AutoDeliveryConfigServiceImplTempTest.java` 和 `AutoDeliverySkuRoutingTempTest.java`，验证后删除。
+- 临时创建 `src/test/java/com/xianyu2/service/impl/GoodsSkuServiceImplTempTest.java`、`AutoDeliveryConfigServiceImplTempTest.java` 和 `AutoDeliverySkuRoutingTempTest.java`，验证后删除。
 
 ### Task 1: SKU 账号隔离查询
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/GoodsSkuService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/GoodsSkuServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/controller/GoodsSkuController.java`
-- Test: `src/test/java/com/xianyusmart/service/impl/GoodsSkuServiceImplTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/GoodsSkuService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/GoodsSkuServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/GoodsSkuController.java`
+- Test: `src/test/java/com/xianyu2/service/impl/GoodsSkuServiceImplTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -68,15 +68,15 @@ Expected: PASS。
 - [ ] **Step 5: 提交 SKU 查询改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/GoodsSkuService.java src/main/java/com/xianyusmart/service/impl/GoodsSkuServiceImpl.java src/main/java/com/xianyusmart/controller/GoodsSkuController.java
+git add src/main/java/com/xianyu2/service/GoodsSkuService.java src/main/java/com/xianyu2/service/impl/GoodsSkuServiceImpl.java src/main/java/com/xianyu2/controller/GoodsSkuController.java
 git commit -m "fix: scope sku queries by account"
 ```
 
 ### Task 2: SKU 配置保存与查询严格化
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/impl/AutoDeliveryConfigServiceImpl.java`
-- Test: `src/test/java/com/xianyusmart/service/impl/AutoDeliveryConfigServiceImplTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AutoDeliveryConfigServiceImpl.java`
+- Test: `src/test/java/com/xianyu2/service/impl/AutoDeliveryConfigServiceImplTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -118,15 +118,15 @@ Expected: PASS。
 - [ ] **Step 5: 提交配置严格化改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/impl/AutoDeliveryConfigServiceImpl.java
+git add src/main/java/com/xianyu2/service/impl/AutoDeliveryConfigServiceImpl.java
 git commit -m "fix: validate sku delivery configuration"
 ```
 
 ### Task 3: 订单发货严格匹配 SKU
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java`
-- Test: `src/test/java/com/xianyusmart/service/impl/AutoDeliverySkuRoutingTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java`
+- Test: `src/test/java/com/xianyu2/service/impl/AutoDeliverySkuRoutingTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -181,7 +181,7 @@ Expected: PASS，并验证未调用卡密领取接口。
 - [ ] **Step 5: 提交发货路由改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java
+git add src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java
 git commit -m "fix: require exact sku delivery config"
 ```
 
@@ -253,9 +253,9 @@ git commit -m "feat: complete sku delivery configuration ui"
 ### Task 5: 清理临时测试并复验
 
 **Files:**
-- Delete: `src/test/java/com/xianyusmart/service/impl/GoodsSkuServiceImplTempTest.java`
-- Delete: `src/test/java/com/xianyusmart/service/impl/AutoDeliveryConfigServiceImplTempTest.java`
-- Delete: `src/test/java/com/xianyusmart/service/impl/AutoDeliverySkuRoutingTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/impl/GoodsSkuServiceImplTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/impl/AutoDeliveryConfigServiceImplTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/impl/AutoDeliverySkuRoutingTempTest.java`
 
 - [ ] **Step 1: 删除本次临时测试文件**
 

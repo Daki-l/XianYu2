@@ -1,4 +1,4 @@
--- XianYuSmart 1.0.0 MySQL 8 全新环境基线
+-- XianYu2 1.0.0 MySQL 8 全新环境基线
 -- 统一使用 InnoDB、utf8mb4 和毫秒级业务时间
 
 CREATE TABLE sys_user (

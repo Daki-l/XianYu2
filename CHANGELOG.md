@@ -1,6 +1,6 @@
 # 更新日志
 
-本文件记录 XianYuSmart 正式版本的重要变化。版本号遵循语义化版本规范。
+本文件记录 XianYu2 正式版本的重要变化。版本号遵循语义化版本规范。
 
 ## [未发布]
 
@@ -35,14 +35,6 @@
 4. 建议分别验证“凭证与私聊同时开启”和“仅私聊开启”两种订单，确认私聊状态与平台发货状态一致。
 5. 账号心跳超时后会显示离线并自动重连，短暂网络波动期间无需根据旧在线状态判断连接是否正常。
 
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.7`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.7.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.6...v2.0.7](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.6...v2.0.7)
-
 ## [2.0.6] - 2026-08-10
 
 `2.0.6` 聚焦多规格自动发货与滑块验证稳定性，确保每个商品规格使用独立配置，并完善验证码恢复链路。
@@ -69,14 +61,6 @@
 2. 本版本没有新增数据库迁移，现有租户、账号、商品、卡密和自动发货配置保持不变。
 3. 有规格商品需要为实际销售的每个 SKU 配置自动发货；未配置规格的订单会停止自动发货并保留失败原因。
 4. 升级后建议检查一个多规格商品的配置进度，并在平台自然触发验证码时确认滑块处理结果。
-
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.6`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.6.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.5...v2.0.6](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.5...v2.0.6)
 
 ## [2.0.5] - 2026-08-04
 
@@ -108,14 +92,6 @@
 4. Embedding 和 AI 商品图默认关闭，普通 AI 对话不需要配置这两项。
 5. 升级后建议在系统设置中执行一次连通性测试，确认模型回复与延时正常。
 
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.5`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.5.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.4...v2.0.5](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.4...v2.0.5)
-
 ## [2.0.4] - 2026-08-03
 
 `2.0.4` 聚焦容器启动、商品发布校验和账号连接稳定性，修复当前公开 issue 并补齐验证码处理闭环。
@@ -133,14 +109,6 @@
 1. 本版本没有新增数据库迁移，升级前仍建议备份 MySQL 数据库和运行环境配置。
 2. 使用固定镜像标签时切换到 `v2.0.4`，不要继续使用存在资源遗漏的 `v2.0.3` 镜像。
 3. 升级后建议检查容器健康状态、账号连接、验证码处理和商品发布前校验。
-
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.4`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.4.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.3...v2.0.4](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.3...v2.0.4)
 
 ## [2.0.3] - 2026-07-30
 
@@ -176,14 +144,6 @@
 4. 原有租户、闲鱼账号、商品、订单、模板和卡密库存不会被清空。
 5. 数据库迁移完成后不建议直接降级到旧版本。
 
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.3`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.3.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.2...v2.0.3](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.2...v2.0.3)
-
 ## [2.0.2] - 2026-07-28
 
 `2.0.2` 聚焦多租户平台的管理边界、在线更新可见性和买家业务追溯，让平台管理员可以安全管理账号权限，让商家可以在一个视图内看清买家、订单、商品、消息与评价的完整关系。
@@ -215,14 +175,6 @@
 4. 原有租户、闲鱼账号、商品、订单、模板和卡密库存不会被清空。
 5. 数据库迁移完成后不建议直接降级到旧版本。
 
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.2`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.2.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.1...v2.0.2](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.1...v2.0.2)
-
 ## [2.0.1] - 2026-07-28
 
 `2.0.1` 聚焦长时间运行后的连接恢复、离线数据补偿、通知诊断和在线更新闭环，让需要人工介入的异常更容易发现、处理和消除。
@@ -246,14 +198,6 @@
 - 自动更新仅接受 GitHub 官方 Release 的同仓库下载地址，并验证 JAR 与校验清单。
 - Star History 改为 GitHub Actions 每日生成仓库内明暗主题图表，README 不再依赖第三方密钥链接。
 - 数据库新增 Flyway `V9` 至 `V11` 迁移，升级前需要备份 MySQL。
-
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.1`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供 `xianyusmart-2.0.1.jar` 与 `SHA256SUMS.txt`。
-
-完整提交差异：[v2.0.0...v2.0.1](https://github.com/Evvvvvvvan/XianYuSmart/compare/v2.0.0...v2.0.1)
 
 ## [2.0.0] - 2026-07-27
 
@@ -293,24 +237,6 @@
 - 多租户字段、索引和唯一约束已经调整，不应将 `2.0.0` 数据库直接交给 `1.0.0` 程序运行。
 - 本版本仅授权非商业用途；商业部署、SaaS、代运营、收费服务和其他直接或间接商业用途均不在授权范围内。
 
-### 获取与部署
-
-- 容器镜像：`ghcr.io/evvvvvvvan/xianyusmart:v2.0.0`
-- 滚动标签：`ghcr.io/evvvvvvvan/xianyusmart:latest`
-- GitHub Release 提供可执行 JAR 与 SHA-256 校验文件。
-
-完整提交差异：[v1.0.0...v2.0.0](https://github.com/Evvvvvvvan/XianYuSmart/compare/v1.0.0...v2.0.0)
-
 ## [1.0.0] - 2026-07-15
 
 首个正式版本，面向单商家私有部署的闲鱼虚拟商品经营场景，提供商品、卡密库存、自动交付、自动回复、异常待办、MySQL 持久化和容器部署能力。
-
-[2.0.7]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.7
-[2.0.6]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.6
-[2.0.5]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.5
-[2.0.4]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.4
-[2.0.3]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.3
-[2.0.2]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.2
-[2.0.1]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.1
-[2.0.0]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v2.0.0
-[1.0.0]: https://github.com/Evvvvvvvan/XianYuSmart/releases/tag/v1.0.0

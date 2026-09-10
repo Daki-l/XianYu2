@@ -13,7 +13,7 @@
 ## 实施约束
 
 - 仅修改本计划列出的文件；保留 `README.md`、`DISCLAIMER.md` 及其他现有未提交改动。
-- Java 命令统一使用 `.agents\skills\operating-xianyusmart\scripts\project.ps1`，确保 JDK 21。
+- Java 命令统一使用 `.agents\skills\operating-xianyu2\scripts\project.ps1`，确保 JDK 21。
 - 不修改 `pom.xml`：项目已有 `com.microsoft.playwright:playwright:1.40.0` 和 `spring-boot-starter-test`。
 - 滑块任务不保存 Cookie、Token、完整验证地址或指纹脚本到状态响应和日志。
 - 前端不得提交验证地址；后端只使用 `WebSocketTokenService` 已保存的地址。
@@ -27,12 +27,12 @@
 
 **Files:**
 
-- Create: `src/main/java/com/xianyusmart/service/CaptchaSolveService.java`
-- Create: `src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java`
-- Create: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/service/WebSocketTokenService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/WebSocketTokenServiceImpl.java`
-- Test temporarily: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveServiceImplTest.java`
+- Create: `src/main/java/com/xianyu2/service/CaptchaSolveService.java`
+- Create: `src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java`
+- Create: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/WebSocketTokenService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/WebSocketTokenServiceImpl.java`
+- Test temporarily: `src/test/java/com/xianyu2/service/impl/CaptchaSolveServiceImplTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -62,7 +62,7 @@ void updatesCookieAndReconnectsOnlyAfterSolvedResult() {}
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: Maven 使用 Java 21，因 `CaptchaSolveService`、`CaptchaBrowserRunner` 和实现类尚不存在而编译失败。
@@ -171,7 +171,7 @@ boolean connected = updated && webSocketService.restartAfterCredentialUpdate(acc
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: Java 21；`CaptchaSolveServiceImplTest` 全部通过。
@@ -180,8 +180,8 @@ Expected: Java 21；`CaptchaSolveServiceImplTest` 全部通过。
 
 **Files:**
 
-- Create: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Test temporarily: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunnerTest.java`
+- Create: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Test temporarily: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunnerTest.java`
 - Test temporarily: `src/test/resources/captcha/main-frame-slider.html`
 - Test temporarily: `src/test/resources/captcha/nested-frame-slider.html`
 - Test temporarily: `src/test/resources/captcha/slider-frame.html`
@@ -214,7 +214,7 @@ void initScriptMasksAutomaticBrowserSignals() {}
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 因 `PlaywrightCaptchaBrowserRunner` 尚不存在而编译失败。
@@ -297,7 +297,7 @@ double distance = Math.max(180, Math.min(360, track.width - handle.width));
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 主页面、嵌套 iframe、距离、域名和指纹测试全部通过；无外网请求。
@@ -306,8 +306,8 @@ Expected: 主页面、嵌套 iframe、距离、域名和指纹测试全部通过
 
 **Files:**
 
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
-- Test temporarily: `src/test/java/com/xianyusmart/controller/WebSocketControllerCaptchaTest.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
+- Test temporarily: `src/test/java/com/xianyu2/controller/WebSocketControllerCaptchaTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -331,7 +331,7 @@ Mock `XianyuAccountMapper.selectById` 模拟当前租户可见和不可见账号
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 新接口尚不存在，测试失败。
@@ -387,7 +387,7 @@ log.warn("⚠️ 账号需要滑块验证: accountId={}", accountId);
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 控制器账号归属、启动和脱敏状态测试全部通过。
@@ -486,7 +486,7 @@ After: 可选择全自动拖动、本机人工拖动或粘贴 Cookie，验证完
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend
 ```
 
 Expected: `vue-tsc --build` 和 `vite build` 均成功，不新增锁文件。
@@ -495,9 +495,9 @@ Expected: `vue-tsc --build` 和 `vite build` 均成功，不新增锁文件。
 
 **Files:**
 
-- Modify: `src/main/java/com/xianyusmart/service/OrderService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/OrderServiceImpl.java`
-- Test temporarily: `src/test/java/com/xianyusmart/service/impl/OrderServiceImplBargainTest.java`
+- Modify: `src/main/java/com/xianyu2/service/OrderService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/OrderServiceImpl.java`
+- Test temporarily: `src/test/java/com/xianyu2/service/impl/OrderServiceImplBargainTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -530,7 +530,7 @@ assertEquals(buyerId, payload.get("buyerId"));
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: `OrderService.freeShippingBargain` 尚不存在，测试编译失败。
@@ -573,7 +573,7 @@ XianyuApiCallUtils.ApiCallResult result = xianyuApiCallUtils.callApiWithRetry(
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 小刀 API 名称、参数类型、幂等成功和失败分支测试全部通过。
@@ -582,8 +582,8 @@ Expected: 小刀 API 名称、参数类型、幂等成功和失败分支测试�
 
 **Files:**
 
-- Modify: `src/main/java/com/xianyusmart/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java`
-- Test temporarily: `src/test/java/com/xianyusmart/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListenerBargainTest.java`
+- Modify: `src/main/java/com/xianyu2/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java`
+- Test temporarily: `src/test/java/com/xianyu2/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListenerBargainTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -613,7 +613,7 @@ void existingPaymentMessageStillCreatesDeliveryTask() {}
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 监听器尚未识别小刀消息，测试失败。
@@ -685,7 +685,7 @@ if (!isPaymentMessage(message) && !bargainSuccess) {
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: 等待、成功、去重、归属、开关和原付款消息回归测试全部通过。
@@ -694,11 +694,11 @@ Expected: 等待、成功、去重、归属、开关和原付款消息回归测�
 
 **Files:**
 
-- Delete temporary: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveServiceImplTest.java`
-- Delete temporary: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunnerTest.java`
-- Delete temporary: `src/test/java/com/xianyusmart/controller/WebSocketControllerCaptchaTest.java`
-- Delete temporary: `src/test/java/com/xianyusmart/service/impl/OrderServiceImplBargainTest.java`
-- Delete temporary: `src/test/java/com/xianyusmart/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListenerBargainTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/service/impl/CaptchaSolveServiceImplTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunnerTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/controller/WebSocketControllerCaptchaTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/service/impl/OrderServiceImplBargainTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListenerBargainTest.java`
 - Delete temporary: `src/test/resources/captcha/main-frame-slider.html`
 - Delete temporary: `src/test/resources/captcha/nested-frame-slider.html`
 - Delete temporary: `src/test/resources/captcha/slider-frame.html`
@@ -722,7 +722,7 @@ Expected: 无输出。
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: Java 21；Maven `BUILD SUCCESS`；正式代码不依赖临时测试资源。
@@ -732,7 +732,7 @@ Expected: Java 21；Maven `BUILD SUCCESS`；正式代码不依赖临时测试资
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend
 ```
 
 Expected: TypeScript 类型检查和 Vite 正式构建成功。
@@ -745,7 +745,7 @@ Run:
 git diff --check
 git status --short
 git diff -- src/main/java vue-code/src
-rg -n "captchaUrl=|Cookie:|cookieText=|websocketToken=" src/main/java/com/xianyusmart/service/captcha src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java src/main/java/com/xianyusmart/controller/WebSocketController.java
+rg -n "captchaUrl=|Cookie:|cookieText=|websocketToken=" src/main/java/com/xianyu2/service/captcha src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java src/main/java/com/xianyu2/controller/WebSocketController.java
 ```
 
 Expected:
@@ -761,16 +761,16 @@ Expected:
 
 ```powershell
 git add docs/superpowers/plans/2026-07-30-slider-and-bargain-delivery.md
-git add src/main/java/com/xianyusmart/service/CaptchaSolveService.java
-git add src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java
-git add src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java
-git add src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java
-git add src/main/java/com/xianyusmart/service/WebSocketTokenService.java
-git add src/main/java/com/xianyusmart/service/impl/WebSocketTokenServiceImpl.java
-git add src/main/java/com/xianyusmart/controller/WebSocketController.java
-git add src/main/java/com/xianyusmart/service/OrderService.java
-git add src/main/java/com/xianyusmart/service/impl/OrderServiceImpl.java
-git add src/main/java/com/xianyusmart/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java
+git add src/main/java/com/xianyu2/service/CaptchaSolveService.java
+git add src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java
+git add src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java
+git add src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java
+git add src/main/java/com/xianyu2/service/WebSocketTokenService.java
+git add src/main/java/com/xianyu2/service/impl/WebSocketTokenServiceImpl.java
+git add src/main/java/com/xianyu2/controller/WebSocketController.java
+git add src/main/java/com/xianyu2/service/OrderService.java
+git add src/main/java/com/xianyu2/service/impl/OrderServiceImpl.java
+git add src/main/java/com/xianyu2/event/chatMessageEvent/lister/ChatMessageEventAutoDeliveryListener.java
 git add vue-code/src/api/websocket.ts
 git add vue-code/src/views/connection/components/CaptchaGuideDialog.vue
 git add vue-code/src/views/connection/ConnectionDetail.vue

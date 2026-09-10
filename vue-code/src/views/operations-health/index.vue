@@ -54,7 +54,7 @@ const channelTypes: Array<{
   { value: 'BARK', label: 'Bark', description: 'iPhone 实时推送', fields: [
     { key: 'serverUrl', label: '服务地址', placeholder: 'https://api.day.app' },
     { key: 'deviceKey', label: 'Device Key', placeholder: 'Bark 设备密钥', secret: true },
-    { key: 'group', label: '推送分组（可选）', placeholder: 'XianYuSmart' }
+    { key: 'group', label: '推送分组（可选）', placeholder: 'XianYu2' }
   ], defaults: { serverUrl: 'https://api.day.app' } },
   { value: 'PUSHPLUS', label: 'PushPlus', description: '微信消息推送', fields: [
     { key: 'token', label: 'Token', placeholder: 'PushPlus Token', secret: true },
@@ -66,7 +66,7 @@ const channelTypes: Array<{
   ] },
   { value: 'WEBHOOK', label: '通用 Webhook', description: '向自建系统发送标准 JSON', fields: [
     { key: 'webhookUrl', label: 'Webhook 地址', placeholder: 'https://example.com/webhook' },
-    { key: 'secret', label: '签名密钥（可选）', placeholder: '用于 X-XianYuSmart-Signature', secret: true }
+    { key: 'secret', label: '签名密钥（可选）', placeholder: '用于 X-XianYu2-Signature', secret: true }
   ] }
 ]
 const defaultMessageTemplate = '【{eventName}】{title}\n{content}\n账号：{accountId}'

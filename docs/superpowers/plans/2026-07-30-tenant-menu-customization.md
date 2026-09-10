@@ -13,14 +13,14 @@
 ## 文件结构
 
 - Create: `vue-code/src/config/menu.ts` — 菜单目录、布局归一化、移动和序列化。
-- Modify: `src/main/java/com/xianyusmart/controller/dto/CurrentUserRespDTO.java` — 返回当前租户菜单布局。
-- Modify: `src/main/java/com/xianyusmart/controller/SystemController.java` — 从现有租户配置服务读取布局。
+- Modify: `src/main/java/com/xianyu2/controller/dto/CurrentUserRespDTO.java` — 返回当前租户菜单布局。
+- Modify: `src/main/java/com/xianyu2/controller/SystemController.java` — 从现有租户配置服务读取布局。
 - Modify: `vue-code/src/api/system.ts` — 声明 `menuLayout` 响应字段。
 - Modify: `vue-code/src/utils/permission.ts` — 提供响应式菜单布局更新方法。
 - Modify: `vue-code/src/components/layout/NavMenu.vue` — 数据驱动渲染并优化全局菜单 UI。
 - Modify: `vue-code/src/views/settings/index.vue` — 增加菜单管理、拖动排序、移动按钮、保存与恢复默认。
 - Temporary Test: `vue-code/src/config/menu.test.ts` — 菜单布局纯函数 RED/GREEN 验证，完成后删除。
-- Temporary Test: `src/test/java/com/xianyusmart/controller/SystemControllerMenuLayoutTest.java` — 当前用户布局 RED/GREEN 验证，完成后删除。
+- Temporary Test: `src/test/java/com/xianyu2/controller/SystemControllerMenuLayoutTest.java` — 当前用户布局 RED/GREEN 验证，完成后删除。
 
 ### Task 1: 菜单目录与布局算法
 
@@ -269,21 +269,21 @@ Expected: 3 tests passed，0 failed。
 ### Task 2: 当前用户接口携带租户布局
 
 **Files:**
-- Create: `src/test/java/com/xianyusmart/controller/SystemControllerMenuLayoutTest.java`
-- Modify: `src/main/java/com/xianyusmart/controller/dto/CurrentUserRespDTO.java`
-- Modify: `src/main/java/com/xianyusmart/controller/SystemController.java`
+- Create: `src/test/java/com/xianyu2/controller/SystemControllerMenuLayoutTest.java`
+- Modify: `src/main/java/com/xianyu2/controller/dto/CurrentUserRespDTO.java`
+- Modify: `src/main/java/com/xianyu2/controller/SystemController.java`
 - Modify: `vue-code/src/api/system.ts`
 - Modify: `vue-code/src/utils/permission.ts`
 
 - [ ] **Step 1: 编写失败的控制器临时测试**
 
 ```java
-package com.xianyusmart.controller;
+package com.xianyu2.controller;
 
-import com.xianyusmart.entity.SysUser;
-import com.xianyusmart.service.AuthService;
-import com.xianyusmart.service.PlatformPermissionService;
-import com.xianyusmart.service.SysSettingService;
+import com.xianyu2.entity.SysUser;
+import com.xianyu2.service.AuthService;
+import com.xianyu2.service.PlatformPermissionService;
+import com.xianyu2.service.SysSettingService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -512,7 +512,7 @@ Expected: exit 0。
 
 **Files:**
 - Delete: `vue-code/src/config/menu.test.ts`
-- Delete: `src/test/java/com/xianyusmart/controller/SystemControllerMenuLayoutTest.java`
+- Delete: `src/test/java/com/xianyu2/controller/SystemControllerMenuLayoutTest.java`
 
 - [ ] **Step 1: 删除本次临时测试**
 
@@ -558,6 +558,6 @@ Expected: 无空白错误，仅包含设计、计划和本需求源代码文件�
 - [ ] **Step 5: 提交实现**
 
 ```powershell
-git add -- src/main/java/com/xianyusmart/controller/SystemController.java src/main/java/com/xianyusmart/controller/dto/CurrentUserRespDTO.java vue-code/src/api/system.ts vue-code/src/utils/permission.ts vue-code/src/config/menu.ts vue-code/src/components/layout/NavMenu.vue vue-code/src/views/settings/index.vue docs/superpowers/plans/2026-07-30-tenant-menu-customization.md
+git add -- src/main/java/com/xianyu2/controller/SystemController.java src/main/java/com/xianyu2/controller/dto/CurrentUserRespDTO.java vue-code/src/api/system.ts vue-code/src/utils/permission.ts vue-code/src/config/menu.ts vue-code/src/components/layout/NavMenu.vue vue-code/src/views/settings/index.vue docs/superpowers/plans/2026-07-30-tenant-menu-customization.md
 git commit -m "feat: add tenant menu customization"
 ```

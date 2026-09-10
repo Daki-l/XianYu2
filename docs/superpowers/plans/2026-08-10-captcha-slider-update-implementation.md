@@ -12,17 +12,17 @@
 
 ## 文件结构
 
-- 新建 `src/main/java/com/xianyusmart/service/captcha/CaptchaDragMouse.java`：CDP 鼠标事件与 Playwright 降级。
-- 修改 `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`：指纹、页面状态、三轨迹、重试和人工轨迹。
+- 新建 `src/main/java/com/xianyu2/service/captcha/CaptchaDragMouse.java`：CDP 鼠标事件与 Playwright 降级。
+- 修改 `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`：指纹、页面状态、三轨迹、重试和人工轨迹。
 - 修改 `vue-code/src/views/connection/components/CaptchaGuideDialog.vue`：自动失败后一键转人工和 Cookie 入口。
-- 临时创建 `src/test/java/com/xianyusmart/service/captcha/CaptchaDragMouseTempTest.java`、`CaptchaTrajectoryTempTest.java` 和 `CaptchaStateTempTest.java`，验证后删除。
+- 临时创建 `src/test/java/com/xianyu2/service/captcha/CaptchaDragMouseTempTest.java`、`CaptchaTrajectoryTempTest.java` 和 `CaptchaStateTempTest.java`，验证后删除。
 
 ### Task 1: CDP 增量鼠标事件
 
 **Files:**
-- Create: `src/main/java/com/xianyusmart/service/captcha/CaptchaDragMouse.java`
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Test: `src/test/java/com/xianyusmart/service/captcha/CaptchaDragMouseTempTest.java`
+- Create: `src/main/java/com/xianyu2/service/captcha/CaptchaDragMouse.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Test: `src/test/java/com/xianyu2/service/captcha/CaptchaDragMouseTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -69,15 +69,15 @@ Expected: PASS。
 - [ ] **Step 5: 提交 CDP 鼠标改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/captcha/CaptchaDragMouse.java src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java
+git add src/main/java/com/xianyu2/service/captcha/CaptchaDragMouse.java src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java
 git commit -m "fix: send captcha drag through cdp"
 ```
 
 ### Task 2: 三轨迹轮换与边界
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Test: `src/test/java/com/xianyusmart/service/captcha/CaptchaTrajectoryTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Test: `src/test/java/com/xianyu2/service/captcha/CaptchaTrajectoryTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -124,15 +124,15 @@ Expected: PASS。
 - [ ] **Step 6: 提交轨迹改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java
+git add src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java
 git commit -m "feat: rotate captcha drag trajectories"
 ```
 
 ### Task 3: 浏览器环境与状态恢复
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
-- Test: `src/test/java/com/xianyusmart/service/captcha/CaptchaStateTempTest.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Test: `src/test/java/com/xianyu2/service/captcha/CaptchaStateTempTest.java`
 
 - [ ] **Step 1: 编写失败测试**
 
@@ -180,7 +180,7 @@ Expected: PASS。
 - [ ] **Step 7: 提交状态恢复改动**
 
 ```powershell
-git add src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java
+git add src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java
 git commit -m "fix: harden captcha state recovery"
 ```
 
@@ -225,9 +225,9 @@ git commit -m "feat: add captcha manual fallback"
 ### Task 5: 清理临时测试并整体复验
 
 **Files:**
-- Delete: `src/test/java/com/xianyusmart/service/captcha/CaptchaDragMouseTempTest.java`
-- Delete: `src/test/java/com/xianyusmart/service/captcha/CaptchaTrajectoryTempTest.java`
-- Delete: `src/test/java/com/xianyusmart/service/captcha/CaptchaStateTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/captcha/CaptchaDragMouseTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/captcha/CaptchaTrajectoryTempTest.java`
+- Delete: `src/test/java/com/xianyu2/service/captcha/CaptchaStateTempTest.java`
 
 - [ ] **Step 1: 删除临时测试产物**
 

@@ -12,9 +12,9 @@
 
 ## 文件结构
 
-- Create: `src/main/java/com/xianyusmart/util/RegistrationPasswordPolicy.java` — 后端注册密码规则与错误信息。
-- Modify: `src/main/java/com/xianyusmart/controller/LoginController.java` — 注册写入前调用密码规则。
-- Create temporarily: `src/test/java/com/xianyusmart/util/RegistrationPasswordPolicyTest.java` — 后端红绿回归验证，交付前删除。
+- Create: `src/main/java/com/xianyu2/util/RegistrationPasswordPolicy.java` — 后端注册密码规则与错误信息。
+- Modify: `src/main/java/com/xianyu2/controller/LoginController.java` — 注册写入前调用密码规则。
+- Create temporarily: `src/test/java/com/xianyu2/util/RegistrationPasswordPolicyTest.java` — 后端红绿回归验证，交付前删除。
 - Create: `vue-code/src/utils/registration-password.ts` — 前端密码规则、强度和检查项状态。
 - Modify: `vue-code/src/views/login/index.vue` — 注册页实时反馈、确认状态和按钮控制。
 - Create temporarily: `vue-code/scripts/registration-password.test.mjs` — 前端纯函数红绿验证，交付前删除。
@@ -23,14 +23,14 @@
 ### Task 1: 后端密码策略红绿验证
 
 **Files:**
-- Create temporarily: `src/test/java/com/xianyusmart/util/RegistrationPasswordPolicyTest.java`
-- Create: `src/main/java/com/xianyusmart/util/RegistrationPasswordPolicy.java`
-- Modify: `src/main/java/com/xianyusmart/controller/LoginController.java:53-78`
+- Create temporarily: `src/test/java/com/xianyu2/util/RegistrationPasswordPolicyTest.java`
+- Create: `src/main/java/com/xianyu2/util/RegistrationPasswordPolicy.java`
+- Modify: `src/main/java/com/xianyu2/controller/LoginController.java:53-78`
 
 - [ ] **Step 1: 编写失败测试**
 
 ```java
-package com.xianyusmart.util;
+package com.xianyu2.util;
 
 import org.junit.jupiter.api.Test;
 
@@ -72,7 +72,7 @@ class RegistrationPasswordPolicyTest {
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: `RegistrationPasswordPolicy` 不存在导致测试编译失败。
@@ -80,7 +80,7 @@ Expected: `RegistrationPasswordPolicy` 不存在导致测试编译失败。
 - [ ] **Step 3: 实现最小后端规则**
 
 ```java
-package com.xianyusmart.util;
+package com.xianyu2.util;
 
 import java.util.Locale;
 import java.util.Set;
@@ -131,7 +131,7 @@ public final class RegistrationPasswordPolicy {
 在 `LoginController` 增加：
 
 ```java
-import com.xianyusmart.util.RegistrationPasswordPolicy;
+import com.xianyu2.util.RegistrationPasswordPolicy;
 ```
 
 将原密码长度判断替换为：
@@ -148,7 +148,7 @@ if (passwordError != null) {
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 ```
 
 Expected: `BUILD SUCCESS`，四个策略测试通过。
@@ -430,7 +430,7 @@ async function handleRegister() {
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend
 ```
 
 Expected: Vue TypeScript 类型检查与 Vite 构建均成功，`src/main/resources/static` 更新。
@@ -438,7 +438,7 @@ Expected: Vue TypeScript 类型检查与 Vite 构建均成功，`src/main/resour
 ### Task 4: 清理、视觉验证与完整交付
 
 **Files:**
-- Delete: `src/test/java/com/xianyusmart/util/RegistrationPasswordPolicyTest.java`
+- Delete: `src/test/java/com/xianyu2/util/RegistrationPasswordPolicyTest.java`
 - Delete: `vue-code/scripts/registration-password.test.mjs`
 - Review: all implementation and generated static files
 
@@ -457,9 +457,9 @@ Expected: 无输出。
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task frontend
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task package -Clean -IncludeFrontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task frontend
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task package -Clean -IncludeFrontend
 ```
 
 Expected: 使用 Java 21，Maven 测试、Vue 类型检查、Vite 构建和 JAR 打包全部成功。
@@ -491,7 +491,7 @@ Expected: 无空白错误；没有临时测试；`DISCLAIMER.md` 与 README 原�
 仅暂存实现文件、计划文档与正式前端构建产物：
 
 ```powershell
-git add -- src/main/java/com/xianyusmart/util/RegistrationPasswordPolicy.java src/main/java/com/xianyusmart/controller/LoginController.java vue-code/src/utils/registration-password.ts vue-code/src/views/login/index.vue
+git add -- src/main/java/com/xianyu2/util/RegistrationPasswordPolicy.java src/main/java/com/xianyu2/controller/LoginController.java vue-code/src/utils/registration-password.ts vue-code/src/views/login/index.vue
 git add -A -- src/main/resources/static
 git commit -m "fix: show registration password feedback"
 git push origin main

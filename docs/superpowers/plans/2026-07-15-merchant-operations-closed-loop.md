@@ -1,4 +1,4 @@
-# XianYuSmart Merchant Operations Closed Loop Implementation Plan
+# XianYu2 Merchant Operations Closed Loop Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -12,13 +12,13 @@
 
 ## 文件结构
 
-- 修改 `src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordReqDTO.java`：接收履约状态列表。
-- 修改 `src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordDTO.java`：返回履约状态和失败原因。
-- 修改 `src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java`：状态筛选和失败任务原子重排队。
-- 修改 `src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java`：分页边界、状态校验、响应映射。
-- 修改 `src/main/java/com/xianyusmart/service/DeliveryTaskService.java`：声明安全重排队方法。
-- 修改 `src/main/java/com/xianyusmart/service/impl/DeliveryTaskServiceImpl.java`：实现安全重排队方法。
-- 修改 `src/main/java/com/xianyusmart/controller/OrderController.java`：提供失败任务重排队接口。
+- 修改 `src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordReqDTO.java`：接收履约状态列表。
+- 修改 `src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordDTO.java`：返回履约状态和失败原因。
+- 修改 `src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java`：状态筛选和失败任务原子重排队。
+- 修改 `src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java`：分页边界、状态校验、响应映射。
+- 修改 `src/main/java/com/xianyu2/service/DeliveryTaskService.java`：声明安全重排队方法。
+- 修改 `src/main/java/com/xianyu2/service/impl/DeliveryTaskServiceImpl.java`：实现安全重排队方法。
+- 修改 `src/main/java/com/xianyu2/controller/OrderController.java`：提供失败任务重排队接口。
 - 新建 `src/main/resources/db/migration/V2__add_order_delivery_filter_index.sql`：增加后台查询组合索引。
 - 修改 `vue-code/src/api/order.ts`：同步状态字段、筛选参数和重排队接口。
 - 新建 `vue-code/src/views/orders/order-status.ts`：集中维护状态解析、筛选项和视觉文案。
@@ -30,32 +30,32 @@
 - 修改 `vue-code/src/views/dashboard/useDashboard.ts`：阻止并发重复刷新。
 - 新建 `vue-code/src/views/kami-config/kami-stock.ts`：统一低库存阈值判断。
 - 修改 `vue-code/src/views/kami-config/index.vue`：支持低库存仓库视图和恢复全部。
-- 新建 `src/main/java/com/xianyusmart/controller/dto/UpdateItemInfoReqDTO.java`：接收本地商品资料。
-- 修改 `src/main/java/com/xianyusmart/service/ItemService.java` 与 `src/main/java/com/xianyusmart/service/impl/ItemServiceImpl.java`：校验并更新本地商品资料。
-- 修改 `src/main/java/com/xianyusmart/service/GoodsInfoService.java` 与 `src/main/java/com/xianyusmart/service/impl/GoodsInfoServiceImpl.java`：按账号与商品联合更新安全字段。
-- 修改 `src/main/java/com/xianyusmart/controller/ItemController.java`：提供本地商品资料更新接口。
+- 新建 `src/main/java/com/xianyu2/controller/dto/UpdateItemInfoReqDTO.java`：接收本地商品资料。
+- 修改 `src/main/java/com/xianyu2/service/ItemService.java` 与 `src/main/java/com/xianyu2/service/impl/ItemServiceImpl.java`：校验并更新本地商品资料。
+- 修改 `src/main/java/com/xianyu2/service/GoodsInfoService.java` 与 `src/main/java/com/xianyu2/service/impl/GoodsInfoServiceImpl.java`：按账号与商品联合更新安全字段。
+- 修改 `src/main/java/com/xianyu2/controller/ItemController.java`：提供本地商品资料更新接口。
 - 修改 `vue-code/src/api/goods.ts`：增加本地商品资料更新请求。
 - 新建 `vue-code/src/views/goods/goods-edit.ts` 与 `vue-code/src/views/goods/components/GoodsEditDialog.vue`：商品编辑校验与简洁弹窗。
 - 修改 `vue-code/src/views/goods/useGoodsManager.ts`、`vue-code/src/views/goods/index.vue` 与 `vue-code/src/views/goods/components/GoodsTable.vue`：接入编辑、平台跳转和保存刷新。
-- 临时创建后删除 `src/test/java/com/xianyusmart/service/impl/AutoDeliveryServiceImplTempTest.java`、`src/test/java/com/xianyusmart/service/impl/DeliveryTaskServiceImplTempTest.java`、`src/test/java/com/xianyusmart/service/impl/ItemServiceImplTempTest.java`、`vue-code/temp-tests/order-status.test.ts`、`vue-code/temp-tests/kami-stock.test.ts`、`vue-code/temp-tests/goods-edit.test.ts`。
+- 临时创建后删除 `src/test/java/com/xianyu2/service/impl/AutoDeliveryServiceImplTempTest.java`、`src/test/java/com/xianyu2/service/impl/DeliveryTaskServiceImplTempTest.java`、`src/test/java/com/xianyu2/service/impl/ItemServiceImplTempTest.java`、`vue-code/temp-tests/order-status.test.ts`、`vue-code/temp-tests/kami-stock.test.ts`、`vue-code/temp-tests/goods-edit.test.ts`。
 
 ### Task 1: 补齐发货记录状态查询与响应
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordReqDTO.java`
-- Modify: `src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordDTO.java`
-- Modify: `src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/impl/AutoDeliveryServiceImplTempTest.java`
+- Modify: `src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordReqDTO.java`
+- Modify: `src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordDTO.java`
+- Modify: `src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java`
+- Temporary test: `src/test/java/com/xianyu2/service/impl/AutoDeliveryServiceImplTempTest.java`
 
 - [ ] **Step 1: 写入临时失败测试**
 
 ```java
-package com.xianyusmart.service.impl;
+package com.xianyu2.service.impl;
 
-import com.xianyusmart.controller.dto.AutoDeliveryRecordReqDTO;
-import com.xianyusmart.entity.XianyuGoodsOrder;
-import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
+import com.xianyu2.controller.dto.AutoDeliveryRecordReqDTO;
+import com.xianyu2.entity.XianyuGoodsOrder;
+import com.xianyu2.mapper.XianyuGoodsOrderMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -156,7 +156,7 @@ List<String> deliveryStatuses = reqDTO.getDeliveryStatuses() == null ? List.of()
         reqDTO.getDeliveryStatuses().stream()
                 .map(status -> {
                     try {
-                        return com.xianyusmart.enums.DeliveryStatus.valueOf(status).name();
+                        return com.xianyu2.enums.DeliveryStatus.valueOf(status).name();
                     } catch (Exception e) {
                         throw new IllegalArgumentException("履约状态无效: " + status);
                     }
@@ -217,18 +217,18 @@ Expected: PASS，2 tests completed。
 ### Task 2: 增加失败任务安全重排队
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java`
-- Modify: `src/main/java/com/xianyusmart/service/DeliveryTaskService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/DeliveryTaskServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/controller/OrderController.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/impl/DeliveryTaskServiceImplTempTest.java`
+- Modify: `src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java`
+- Modify: `src/main/java/com/xianyu2/service/DeliveryTaskService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/DeliveryTaskServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/OrderController.java`
+- Temporary test: `src/test/java/com/xianyu2/service/impl/DeliveryTaskServiceImplTempTest.java`
 
 - [ ] **Step 1: 写入临时失败测试**
 
 ```java
-package com.xianyusmart.service.impl;
+package com.xianyu2.service.impl;
 
-import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
+import com.xianyu2.mapper.XianyuGoodsOrderMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -332,7 +332,7 @@ Expected: PASS，1 test completed。
 - [ ] **Step 5: 提交后端闭环**
 
 ```powershell
-git add src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordReqDTO.java src/main/java/com/xianyusmart/controller/dto/AutoDeliveryRecordDTO.java src/main/java/com/xianyusmart/mapper/XianyuGoodsOrderMapper.java src/main/java/com/xianyusmart/service/impl/AutoDeliveryServiceImpl.java src/main/java/com/xianyusmart/service/DeliveryTaskService.java src/main/java/com/xianyusmart/service/impl/DeliveryTaskServiceImpl.java src/main/java/com/xianyusmart/controller/OrderController.java
+git add src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordReqDTO.java src/main/java/com/xianyu2/controller/dto/AutoDeliveryRecordDTO.java src/main/java/com/xianyu2/mapper/XianyuGoodsOrderMapper.java src/main/java/com/xianyu2/service/impl/AutoDeliveryServiceImpl.java src/main/java/com/xianyu2/service/DeliveryTaskService.java src/main/java/com/xianyu2/service/impl/DeliveryTaskServiceImpl.java src/main/java/com/xianyu2/controller/OrderController.java
 git commit -m "feat: 完善履约状态查询与安全重试"
 ```
 
@@ -674,19 +674,19 @@ git commit -m "feat: 完善经营待办与库存定位"
 ### Task 5: 增加商品资料安全编辑闭环
 
 **Files:**
-- Create: `src/main/java/com/xianyusmart/controller/dto/UpdateItemInfoReqDTO.java`
-- Modify: `src/main/java/com/xianyusmart/service/ItemService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/ItemServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/service/GoodsInfoService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/GoodsInfoServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/controller/ItemController.java`
+- Create: `src/main/java/com/xianyu2/controller/dto/UpdateItemInfoReqDTO.java`
+- Modify: `src/main/java/com/xianyu2/service/ItemService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/ItemServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/GoodsInfoService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/GoodsInfoServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/ItemController.java`
 - Modify: `vue-code/src/api/goods.ts`
 - Create: `vue-code/src/views/goods/goods-edit.ts`
 - Create: `vue-code/src/views/goods/components/GoodsEditDialog.vue`
 - Modify: `vue-code/src/views/goods/useGoodsManager.ts`
 - Modify: `vue-code/src/views/goods/index.vue`
 - Modify: `vue-code/src/views/goods/components/GoodsTable.vue`
-- Temporary tests: `src/test/java/com/xianyusmart/service/impl/ItemServiceImplTempTest.java`, `vue-code/temp-tests/goods-edit.test.ts`
+- Temporary tests: `src/test/java/com/xianyu2/service/impl/ItemServiceImplTempTest.java`, `vue-code/temp-tests/goods-edit.test.ts`
 
 - [ ] **Step 1: 写入商品字段校验与账号隔离临时失败测试**
 
@@ -723,7 +723,7 @@ Expected: 后端和前端临时测试通过，类型检查与构建退出码均�
 - [ ] **Step 6: 提交商品资料编辑闭环**
 
 ```powershell
-git add src/main/java/com/xianyusmart/controller/dto/UpdateItemInfoReqDTO.java src/main/java/com/xianyusmart/service/ItemService.java src/main/java/com/xianyusmart/service/impl/ItemServiceImpl.java src/main/java/com/xianyusmart/service/GoodsInfoService.java src/main/java/com/xianyusmart/service/impl/GoodsInfoServiceImpl.java src/main/java/com/xianyusmart/controller/ItemController.java vue-code/src/api/goods.ts vue-code/src/views/goods/goods-edit.ts vue-code/src/views/goods/components/GoodsEditDialog.vue vue-code/src/views/goods/useGoodsManager.ts vue-code/src/views/goods/index.vue vue-code/src/views/goods/components/GoodsTable.vue
+git add src/main/java/com/xianyu2/controller/dto/UpdateItemInfoReqDTO.java src/main/java/com/xianyu2/service/ItemService.java src/main/java/com/xianyu2/service/impl/ItemServiceImpl.java src/main/java/com/xianyu2/service/GoodsInfoService.java src/main/java/com/xianyu2/service/impl/GoodsInfoServiceImpl.java src/main/java/com/xianyu2/controller/ItemController.java vue-code/src/api/goods.ts vue-code/src/views/goods/goods-edit.ts vue-code/src/views/goods/components/GoodsEditDialog.vue vue-code/src/views/goods/useGoodsManager.ts vue-code/src/views/goods/index.vue vue-code/src/views/goods/components/GoodsTable.vue
 git commit -m "feat: 增加商品资料安全编辑"
 ```
 
@@ -757,11 +757,11 @@ Expected: 新索引名称只出现一次，`V2` 排在现有 `V1` 之后，现�
 删除：
 
 ```text
-src/test/java/com/xianyusmart/service/impl/AutoDeliveryServiceImplTempTest.java
-src/test/java/com/xianyusmart/service/impl/DeliveryTaskServiceImplTempTest.java
+src/test/java/com/xianyu2/service/impl/AutoDeliveryServiceImplTempTest.java
+src/test/java/com/xianyu2/service/impl/DeliveryTaskServiceImplTempTest.java
 vue-code/temp-tests/order-status.test.ts
 vue-code/temp-tests/kami-stock.test.ts
-src/test/java/com/xianyusmart/service/impl/ItemServiceImplTempTest.java
+src/test/java/com/xianyu2/service/impl/ItemServiceImplTempTest.java
 vue-code/temp-tests/goods-edit.test.ts
 ```
 
@@ -832,4 +832,4 @@ Run:
 git push origin main
 ```
 
-随后严格调用项目本地 `updating-xianyusmart` 技能，仅执行本地打包、上传 JAR、服务重启和健康检查，不修改 MySQL、Nginx 或其他服务，不创建 Release。
+随后严格调用项目本地 `updating-xianyu2` 技能，仅执行本地打包、上传 JAR、服务重启和健康检查，不修改 MySQL、Nginx 或其他服务，不创建 Release。

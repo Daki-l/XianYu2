@@ -12,25 +12,25 @@
 
 ## 文件边界
 
-- 创建 `src/main/java/com/xianyusmart/config/rag/AIEndpointResolver.java`：只负责 URL 校验、能力路径归一化和 origin/path 拆分。
+- 创建 `src/main/java/com/xianyu2/config/rag/AIEndpointResolver.java`：只负责 URL 校验、能力路径归一化和 origin/path 拆分。
 - 修改 `pom.xml`：增加 Spring AI Anthropic 模型依赖。
-- 修改 `src/main/java/com/xianyusmart/config/rag/DynamicAIChatClientManager.java`：读取协议配置、创建两类模型、提供临时连接测试。
-- 修改 `src/main/java/com/xianyusmart/config/rag/DynamicVectorStoreManager.java`：Embedding 显式启用、独立配置、统一 endpoint。
-- 修改 `src/main/java/com/xianyusmart/service/OpportunityImageService.java`：商品图显式启用、独立配置、统一 endpoint。
-- 修改 `src/main/java/com/xianyusmart/service/impl/SysSettingServiceImpl.java`：聊天和 Embedding 配置分别热更新。
-- 修改 `src/main/java/com/xianyusmart/controller/SysSettingController.java`：增加 `/api/setting/ai/test`。
-- 修改 `src/main/java/com/xianyusmart/controller/AIChatController.java`：状态响应增加提供商、协议和最终 endpoint。
-- 修改 `src/main/java/com/xianyusmart/service/impl/AIServiceImpl.java`：Embedding 未启用时返回明确知识库提示。
-- 修改 `src/main/java/com/xianyusmart/backup/handler/SystemSettingBackupHandler.java`：备份新增非密钥配置。
+- 修改 `src/main/java/com/xianyu2/config/rag/DynamicAIChatClientManager.java`：读取协议配置、创建两类模型、提供临时连接测试。
+- 修改 `src/main/java/com/xianyu2/config/rag/DynamicVectorStoreManager.java`：Embedding 显式启用、独立配置、统一 endpoint。
+- 修改 `src/main/java/com/xianyu2/service/OpportunityImageService.java`：商品图显式启用、独立配置、统一 endpoint。
+- 修改 `src/main/java/com/xianyu2/service/impl/SysSettingServiceImpl.java`：聊天和 Embedding 配置分别热更新。
+- 修改 `src/main/java/com/xianyu2/controller/SysSettingController.java`：增加 `/api/setting/ai/test`。
+- 修改 `src/main/java/com/xianyu2/controller/AIChatController.java`：状态响应增加提供商、协议和最终 endpoint。
+- 修改 `src/main/java/com/xianyu2/service/impl/AIServiceImpl.java`：Embedding 未启用时返回明确知识库提示。
+- 修改 `src/main/java/com/xianyu2/backup/handler/SystemSettingBackupHandler.java`：备份新增非密钥配置。
 - 修改 `vue-code/src/api/ai.ts`：增加连接测试请求和响应类型。
 - 修改 `vue-code/src/views/settings/index.vue`：实现提供商卡片、高级配置、连通性测试、Embedding 与商品图独立开关。
-- 临时创建并删除 `src/test/java/com/xianyusmart/config/rag/AIEndpointResolverTest.java` 与 `DynamicAIChatClientManagerTest.java`：执行 RED/GREEN，结束前清理。
+- 临时创建并删除 `src/test/java/com/xianyu2/config/rag/AIEndpointResolverTest.java` 与 `DynamicAIChatClientManagerTest.java`：执行 RED/GREEN，结束前清理。
 
 ### Task 1: 地址解析器
 
 **Files:**
-- Create: `src/main/java/com/xianyusmart/config/rag/AIEndpointResolver.java`
-- Test temporarily: `src/test/java/com/xianyusmart/config/rag/AIEndpointResolverTest.java`
+- Create: `src/main/java/com/xianyu2/config/rag/AIEndpointResolver.java`
+- Test temporarily: `src/test/java/com/xianyu2/config/rag/AIEndpointResolverTest.java`
 
 - [ ] **Step 1: 写地址解析失败测试**
 
@@ -49,7 +49,7 @@ assertEquals("https://host.example/apps/anthropic/v1/messages",
 
 - [ ] **Step 2: 运行 RED**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
 
 Expected: FAIL，`AIEndpointResolver` 不存在。
 
@@ -75,7 +75,7 @@ public final class AIEndpointResolver {
 
 - [ ] **Step 4: 运行 GREEN**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
 
 Expected: PASS。
 
@@ -83,8 +83,8 @@ Expected: PASS。
 
 **Files:**
 - Modify: `pom.xml`
-- Modify: `src/main/java/com/xianyusmart/config/rag/DynamicAIChatClientManager.java`
-- Test temporarily: `src/test/java/com/xianyusmart/config/rag/DynamicAIChatClientManagerTest.java`
+- Modify: `src/main/java/com/xianyu2/config/rag/DynamicAIChatClientManager.java`
+- Test temporarily: `src/test/java/com/xianyu2/config/rag/DynamicAIChatClientManagerTest.java`
 
 - [ ] **Step 1: 写真实本地 HTTP 协议测试**
 
@@ -106,7 +106,7 @@ Anthropic 用例断言 `/v1/messages` 和 `x-api-key`。
 
 - [ ] **Step 2: 运行 RED**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test DynamicAIChatClientManagerTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test DynamicAIChatClientManagerTest`
 
 Expected: FAIL，双协议配置和连接测试 API 不存在。
 
@@ -154,17 +154,17 @@ AnthropicApi.builder()
 
 - [ ] **Step 5: 运行 GREEN**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test DynamicAIChatClientManagerTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test DynamicAIChatClientManagerTest`
 
 Expected: PASS，两个本地协议用例均通过。
 
 ### Task 3: 独立 Embedding 与商品图
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/config/rag/DynamicVectorStoreManager.java`
-- Modify: `src/main/java/com/xianyusmart/service/OpportunityImageService.java`
-- Modify: `src/main/java/com/xianyusmart/service/impl/AIServiceImpl.java`
-- Extend temporary test: `src/test/java/com/xianyusmart/config/rag/AIEndpointResolverTest.java`
+- Modify: `src/main/java/com/xianyu2/config/rag/DynamicVectorStoreManager.java`
+- Modify: `src/main/java/com/xianyu2/service/OpportunityImageService.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/AIServiceImpl.java`
+- Extend temporary test: `src/test/java/com/xianyu2/config/rag/AIEndpointResolverTest.java`
 
 - [ ] **Step 1: 增加能力路径断言并运行 RED**
 
@@ -175,7 +175,7 @@ assertEquals("https://host.example/v1/images/generations",
         AIEndpointResolver.resolve("https://host.example/v1", AIEndpointResolver.Capability.IMAGE).endpoint());
 ```
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
 
 Expected: 新断言在实现能力路径前失败。
 
@@ -197,21 +197,21 @@ Embedding 未启用或配置不完整，请先在系统设置的高级配置中�
 
 - [ ] **Step 3: 运行 GREEN 和编译**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task test -Test AIEndpointResolverTest`
 
 Expected: PASS。
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task build`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task build`
 
 Expected: BUILD SUCCESS。
 
 ### Task 4: 热更新、状态和设置测试接口
 
 **Files:**
-- Modify: `src/main/java/com/xianyusmart/service/impl/SysSettingServiceImpl.java`
-- Modify: `src/main/java/com/xianyusmart/controller/SysSettingController.java`
-- Modify: `src/main/java/com/xianyusmart/controller/AIChatController.java`
-- Modify: `src/main/java/com/xianyusmart/backup/handler/SystemSettingBackupHandler.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/SysSettingServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/controller/SysSettingController.java`
+- Modify: `src/main/java/com/xianyu2/controller/AIChatController.java`
+- Modify: `src/main/java/com/xianyu2/backup/handler/SystemSettingBackupHandler.java`
 
 - [ ] **Step 1: 扩展热更新键**
 
@@ -249,7 +249,7 @@ AI 状态响应增加 `provider`、`protocol`、`endpoint`。备份集合增加�
 
 - [ ] **Step 4: 编译验证**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task build`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task build`
 
 Expected: BUILD SUCCESS。
 
@@ -319,15 +319,15 @@ ai_model
 
 - [ ] **Step 4: 前端类型与生产构建验证**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task frontend`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task frontend`
 
 Expected: type-check 与 Vite build 全部通过。
 
 ### Task 6: 清理、回归与交付
 
 **Files:**
-- Delete temporary: `src/test/java/com/xianyusmart/config/rag/AIEndpointResolverTest.java`
-- Delete temporary: `src/test/java/com/xianyusmart/config/rag/DynamicAIChatClientManagerTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/config/rag/AIEndpointResolverTest.java`
+- Delete temporary: `src/test/java/com/xianyu2/config/rag/DynamicAIChatClientManagerTest.java`
 
 - [ ] **Step 1: 删除临时测试产物**
 
@@ -335,15 +335,15 @@ Expected: type-check 与 Vite build 全部通过。
 
 - [ ] **Step 2: 清理后重新验证**
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task check`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task check`
 
 Expected: Java 21、Maven 和 origin 校验通过。
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task build`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task build`
 
 Expected: BUILD SUCCESS。
 
-Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyusmart/scripts/project.ps1 -Task frontend`
+Run: `powershell -ExecutionPolicy Bypass -File .agents/skills/operating-xianyu2/scripts/project.ps1 -Task frontend`
 
 Expected: 前端类型检查和生产构建通过。
 

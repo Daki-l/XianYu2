@@ -109,7 +109,7 @@ function handleKeydown(e: KeyboardEvent) {
       <!-- Logo -->
       <div class="login-logo">
         <div class="login-logo-icon">闲</div>
-        <div class="login-logo-text">XianYuSmart</div>
+        <div class="login-logo-text">XianYu2</div>
       </div>
 
       <!-- Loading -->

@@ -4,7 +4,7 @@ server:
 app:
   version: 2.0.7
   update:
-    release-api: ${UPDATE_RELEASE_API:https://api.github.com/repos/Evvvvvvvan/XianYuSmart/releases/latest}
+    release-api: ${UPDATE_RELEASE_API:}
     request-dir: ${UPDATE_REQUEST_DIR:/app/update}
   admin:
     bootstrap-username: ${BOOTSTRAP_ADMIN_USERNAME:}
@@ -46,8 +46,8 @@ spring:
     date-format: yyyy-MM-dd HH:mm:ss
     time-zone: GMT+8
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/xianyusmart?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true}
-    username: ${DB_USERNAME:xianyusmart}
+    url: ${DB_URL:jdbc:mysql://localhost:3306/xianyu2?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&rewriteBatchedStatements=true}
+    username: ${DB_USERNAME:xianyu2}
     password: ${DB_PASSWORD}
     hikari:
       maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
@@ -69,7 +69,7 @@ spring:
 
 # MyBatis配置
 mybatis-plus:
-  type-handlers-package: com.xianyusmart.config
+  type-handlers-package: com.xianyu2.config
   configuration:
     default-enum-type-handler: org.apache.ibatis.type.EnumOrdinalTypeHandler
 

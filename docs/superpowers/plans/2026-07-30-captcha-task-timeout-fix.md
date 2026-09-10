@@ -12,28 +12,28 @@
 
 ## 文件结构
 
-- Modify: `src/main/java/com/xianyusmart/config/PlaywrightManager.java`
+- Modify: `src/main/java/com/xianyu2/config/PlaywrightManager.java`
   - 防止活跃或未过期 Playwright 临时目录被清理。
-- Modify: `src/main/java/com/xianyusmart/config/AsyncConfig.java`
+- Modify: `src/main/java/com/xianyu2/config/AsyncConfig.java`
   - 提供不受 WebSocket 阻塞任务影响的验证码超时调度器。
-- Modify: `src/main/java/com/xianyusmart/service/CaptchaSolveService.java`
+- Modify: `src/main/java/com/xianyu2/service/CaptchaSolveService.java`
   - 增加 `CANCELLED`、进度字段和取消方法。
-- Modify: `src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java`
   - 定义安全的阶段进度回调。
-- Modify: `src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java`
+- Modify: `src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java`
   - 在真实浏览器阶段和每次拖动时上报进度。
-- Modify: `src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java`
+- Modify: `src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java`
   - 保存执行句柄、硬超时、心跳、取消和任务写回保护。
-- Modify: `src/main/java/com/xianyusmart/controller/WebSocketController.java`
+- Modify: `src/main/java/com/xianyu2/controller/WebSocketController.java`
   - 增加租户归属校验后的取消接口。
 - Modify: `vue-code/src/api/websocket.ts`
   - 对齐进度字段、`CANCELLED` 和取消 API。
 - Modify: `vue-code/src/views/connection/components/CaptchaGuideDialog.vue`
   - 恢复活动任务、实时显示阶段/时间/原因并支持取消。
-- Temporary test: `src/test/java/com/xianyusmart/config/PlaywrightManagerCleanupTest.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/impl/CaptchaSolveServiceImplLifecycleTest.java`
-- Temporary test: `src/test/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunnerProgressTest.java`
-- Temporary test: `src/test/java/com/xianyusmart/controller/WebSocketControllerCaptchaCancelTest.java`
+- Temporary test: `src/test/java/com/xianyu2/config/PlaywrightManagerCleanupTest.java`
+- Temporary test: `src/test/java/com/xianyu2/service/impl/CaptchaSolveServiceImplLifecycleTest.java`
+- Temporary test: `src/test/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunnerProgressTest.java`
+- Temporary test: `src/test/java/com/xianyu2/controller/WebSocketControllerCaptchaCancelTest.java`
 
 ### Task 1: 修复 Playwright 临时目录清理
 
@@ -281,7 +281,7 @@ export function cancelCaptcha(accountId: number) {
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 cd vue-code
 npm.cmd run type-check
 npm.cmd run build:spring
@@ -304,7 +304,7 @@ Expected: Java 21 `BUILD SUCCESS`，`vue-tsc` 和 Vite 构建成功。
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyusmart\scripts\project.ps1 -Task test
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\operating-xianyu2\scripts\project.ps1 -Task test
 cd vue-code
 npm.cmd run type-check
 git diff --check
@@ -317,7 +317,7 @@ Expected: 全部退出码为 0，Git 仅包含正式修复文件和既有两处�
 Run:
 
 ```powershell
-rg -n "cookieText|captchaUrl|x5secdata|Token" src/main/java/com/xianyusmart/service/captcha src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java
+rg -n "cookieText|captchaUrl|x5secdata|Token" src/main/java/com/xianyu2/service/captcha src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java
 git diff --stat
 git diff --check
 ```
@@ -330,12 +330,12 @@ Expected: 代码变量可存在，新增日志、状态消息和接口返回不�
 
 ```powershell
 git add -- `
-  src/main/java/com/xianyusmart/config/PlaywrightManager.java `
-  src/main/java/com/xianyusmart/service/CaptchaSolveService.java `
-  src/main/java/com/xianyusmart/service/captcha/CaptchaBrowserRunner.java `
-  src/main/java/com/xianyusmart/service/captcha/PlaywrightCaptchaBrowserRunner.java `
-  src/main/java/com/xianyusmart/service/impl/CaptchaSolveServiceImpl.java `
-  src/main/java/com/xianyusmart/controller/WebSocketController.java `
+  src/main/java/com/xianyu2/config/PlaywrightManager.java `
+  src/main/java/com/xianyu2/service/CaptchaSolveService.java `
+  src/main/java/com/xianyu2/service/captcha/CaptchaBrowserRunner.java `
+  src/main/java/com/xianyu2/service/captcha/PlaywrightCaptchaBrowserRunner.java `
+  src/main/java/com/xianyu2/service/impl/CaptchaSolveServiceImpl.java `
+  src/main/java/com/xianyu2/controller/WebSocketController.java `
   vue-code/src/api/websocket.ts `
   vue-code/src/views/connection/components/CaptchaGuideDialog.vue
 git commit -m "fix: make captcha tasks observable and interruptible"
@@ -354,8 +354,8 @@ git push origin main
 - [ ] **Step 3: 使用更新技能预检并部署**
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\updating-xianyusmart\scripts\deploy.ps1 -WhatIf
-powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\updating-xianyusmart\scripts\deploy.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\updating-xianyu2\scripts\deploy.ps1 -WhatIf
+powershell -NoProfile -ExecutionPolicy Bypass -File .agents\skills\updating-xianyu2\scripts\deploy.ps1
 ```
 
 只重建 Compose `app` 服务，不修改 MySQL、Nginx 和其他服务。
