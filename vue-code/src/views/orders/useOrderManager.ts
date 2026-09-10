@@ -47,6 +47,10 @@ export function useOrderManager() {
   const confirmTarget = ref<DeliveryRecordItem | null>(null)
 
   const totalPages = computed(() => Math.ceil(total.value / (queryParams.pageSize || 20)))
+  const merchantRateDetailsEnabled = computed(() => {
+    const account = accounts.value.find(item => item.id === queryParams.xianyuAccountId)
+    return account?.merchantRateDetailsEnabled !== 0
+  })
 
   const loadAccounts = async () => {
     try {
@@ -174,6 +178,7 @@ export function useOrderManager() {
     const accountId = queryParams.xianyuAccountId
     const orderIds = [...new Set(records.map(item => item.orderId).filter((orderId): orderId is string => Boolean(orderId)))]
     if (!accountId || orderIds.length === 0) return
+    if (!merchantRateDetailsEnabled.value) return
     const requestId = ++rateSyncSequence
     records.forEach(item => {
       rateSyncRequests.set(item, requestId)
@@ -361,6 +366,7 @@ export function useOrderManager() {
     onlyOnSale,
     selectedGoodsId,
     selectedDeliveryStatus,
+    merchantRateDetailsEnabled,
     deliveryStatusOptions,
     queryParams,
     dialogs,

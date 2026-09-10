@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import { updateAccount } from '@/api/account'
 import { showSuccess, showError } from '@/utils'
 import type { Account } from '@/types'
@@ -19,19 +19,22 @@ const emit = defineEmits<Emits>()
 
 const formData = ref({
   accountId: 0,
-  accountNote: ''
+  accountNote: '',
+  merchantRateDetailsEnabled: 1
 })
 
 watch(() => props.account, (newAccount) => {
   if (newAccount) {
     formData.value = {
       accountId: newAccount.id,
-      accountNote: newAccount.accountNote || ''
+      accountNote: newAccount.accountNote || '',
+      merchantRateDetailsEnabled: newAccount.merchantRateDetailsEnabled ?? 1
     }
   } else {
     formData.value = {
       accountId: 0,
-      accountNote: ''
+      accountNote: '',
+      merchantRateDetailsEnabled: 1
     }
   }
 }, { immediate: true })
@@ -76,6 +79,18 @@ const handleSubmit = async () => {
             class="modal-input"
             placeholder="账号备注"
           />
+          <label v-if="props.account" class="feature-toggle">
+            <span>
+              <strong>评价详情同步</strong>
+              <small>关闭后，该账号不会请求闲鱼评价详情接口。</small>
+            </span>
+            <input
+              v-model="formData.merchantRateDetailsEnabled"
+              type="checkbox"
+              :true-value="1"
+              :false-value="0"
+            />
+          </label>
         </div>
         
         <div class="modal-footer">
@@ -129,6 +144,34 @@ const handleSubmit = async () => {
 
 .modal-body {
   padding: 20px 16px;
+}
+
+.feature-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  color: #333;
+  font-size: 13px;
+}
+
+.feature-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.feature-toggle small {
+  color: #888;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.feature-toggle input {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .modal-input {

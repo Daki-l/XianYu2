@@ -14,6 +14,7 @@ import com.xianyusmart.mapper.XianyuGoodsOrderMapper;
 import com.xianyusmart.service.OrderService;
 import com.xianyusmart.service.DeliveryTaskService;
 import com.xianyusmart.service.MerchantOperationsService;
+import com.xianyusmart.mapper.XianyuAccountMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -41,6 +42,9 @@ public class OrderController {
 
     @Autowired
     private MerchantOperationsService merchantOperationsService;
+
+    @Autowired
+    private XianyuAccountMapper accountMapper;
 
     @Autowired
     private com.xianyusmart.service.GoodsAutomationService goodsAutomationService;
@@ -270,6 +274,13 @@ public class OrderController {
             }
             if (reqDTO.getOrderIds().size() > 100) {
                 return ResultObject.failed("单次最多查询100个订单");
+            }
+            com.xianyusmart.entity.XianyuAccount account = accountMapper.selectById(reqDTO.getXianyuAccountId());
+            if (account == null) {
+                return ResultObject.failed("账号不存在");
+            }
+            if (Integer.valueOf(0).equals(account.getMerchantRateDetailsEnabled())) {
+                return ResultObject.success(List.of(), "该账号已关闭评价详情同步");
             }
             return ResultObject.success(goodsAutomationService.getRateDetails(
                     reqDTO.getXianyuAccountId(), reqDTO.getOrderIds()));

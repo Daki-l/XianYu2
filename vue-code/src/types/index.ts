@@ -12,6 +12,7 @@ export interface Account {
   accountNote: string
   unb: string
   status: number
+  merchantRateDetailsEnabled?: number
   createdTime: string
   updatedTime: string
 }

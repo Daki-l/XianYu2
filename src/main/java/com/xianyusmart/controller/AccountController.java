@@ -14,6 +14,8 @@ import com.xianyusmart.controller.dto.ManualAddAccountReqDTO;
 import com.xianyusmart.controller.dto.UpdateAccountReqDTO;
 import com.xianyusmart.controller.dto.UpdateAccountRespDTO;
 import com.xianyusmart.service.AccountService;
+import com.xianyusmart.service.OperationLogService;
+import com.xianyusmart.constants.OperationConstants;
 import com.xianyusmart.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,9 @@ public class AccountController {
     
     @Autowired
     private AccountService accountService;
+
+    @Autowired
+    private OperationLogService operationLogService;
 
     /**
      * 获取账号列表
@@ -139,12 +144,31 @@ public class AccountController {
                 return ResultObject.failed("账号不存在");
             }
             
-            // 只更新账号备注
+            Integer previousRateDetailsEnabled = account.getMerchantRateDetailsEnabled();
+
+            // 只允许更新账号备注和本次明确提供的账号级评价详情开关
             if (reqDTO.getAccountNote() != null) {
                 account.setAccountNote(reqDTO.getAccountNote());
             }
-            
+            if (reqDTO.getMerchantRateDetailsEnabled() != null) {
+                Integer enabled = reqDTO.getMerchantRateDetailsEnabled();
+                if (enabled != 0 && enabled != 1) {
+                    return ResultObject.failed("评价详情同步开关只能是0或1");
+                }
+                account.setMerchantRateDetailsEnabled(enabled);
+            }
+
             accountMapper.updateById(account);
+
+            if (reqDTO.getMerchantRateDetailsEnabled() != null
+                    && !java.util.Objects.equals(previousRateDetailsEnabled, account.getMerchantRateDetailsEnabled())) {
+                operationLogService.log(account.getId(), OperationConstants.Type.UPDATE,
+                        OperationConstants.Module.ACCOUNT,
+                        "评价详情同步开关已" + (Integer.valueOf(1).equals(account.getMerchantRateDetailsEnabled()) ? "开启" : "关闭"),
+                        OperationConstants.Status.SUCCESS,
+                        OperationConstants.TargetType.ACCOUNT, String.valueOf(account.getId()),
+                        String.valueOf(reqDTO.getMerchantRateDetailsEnabled()), null, null, null);
+            }
             
             // 不再更新Cookie和UNB
             

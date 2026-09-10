@@ -47,6 +47,11 @@ public class XianyuAccount {
     private Integer status;
 
     /**
+     * 是否允许调用评价详情接口 1:开启 0:关闭
+     */
+    private Integer merchantRateDetailsEnabled;
+
+    /**
      * 消息同步游标，用于断线后从最后确认位置继续接收。
      */
     private Long websocketSyncPts;

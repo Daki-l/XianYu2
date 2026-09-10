@@ -15,7 +15,7 @@ import IconPackage from '@/components/icons/IconPackage.vue'
 
 import OrderTable from './components/OrderTable.vue'
 import { rateOrder, type OrderRateItem } from '@/api/order'
-import { showError, showSuccess } from '@/utils'
+import { showError, showInfo, showSuccess } from '@/utils'
 import { parseRatingContents } from '@/utils/rating-content'
 
 const goodsPanelCollapsed = ref(true)
@@ -33,6 +33,7 @@ const {
   onlyOnSale,
   selectedGoodsId,
   selectedDeliveryStatus,
+  merchantRateDetailsEnabled,
   deliveryStatusOptions,
   queryParams,
   totalPages,
@@ -67,7 +68,9 @@ const manualRateSaving = ref(false)
 const showRateDetailDialog = ref(false)
 const rateDetailTarget = ref<any>(null)
 const rateDetailRefreshing = ref(false)
-const pendingRateCount = computed(() => orderList.value.filter(order => order.rateDetail?.canRate).length)
+const pendingRateCount = computed(() => merchantRateDetailsEnabled.value
+  ? orderList.value.filter(order => order.rateDetail?.canRate).length
+  : 0)
 
 const openManualRate = (order: any) => {
   manualRateTarget.value = order
@@ -77,6 +80,10 @@ const openManualRate = (order: any) => {
 }
 
 const openRateDetail = (order: any) => {
+  if (!merchantRateDetailsEnabled.value) {
+    showInfo('当前账号已关闭评价详情同步')
+    return
+  }
   rateDetailTarget.value = order
   showRateDetailDialog.value = true
   void refreshRateDetail()
@@ -309,7 +316,7 @@ const executeConfirmShipment = async () => {
     </div>
 
     <div class="evaluation-guide">
-      <div><strong>评价处理</strong><span>状态与双方评价内容均从闲鱼平台同步；自动评价规则统一在商品管理配置，本页只处理订单评价与查看结果。</span></div>
+      <div><strong>评价处理</strong><span>{{ merchantRateDetailsEnabled ? '状态与双方评价内容均从闲鱼平台同步；自动评价规则统一在商品管理配置，本页只处理订单评价与查看结果。' : '当前账号已关闭评价详情同步，订单与其他功能不受影响。' }}</span></div>
       <span class="evaluation-guide__count">当前列表可评价 {{ pendingRateCount }} 条</span>
     </div>
 

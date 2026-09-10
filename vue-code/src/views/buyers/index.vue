@@ -66,6 +66,11 @@ const loadAccounts = async () => {
   accountId.value = accountId.value || accounts.value[0]?.id
 }
 
+const isRateDetailsEnabled = (targetAccountId?: number) => {
+  if (!targetAccountId) return true
+  return accounts.value.find(account => account.id === targetAccountId)?.merchantRateDetailsEnabled !== 0
+}
+
 const loadProfiles = async () => {
   loading.value = true
   try {
@@ -159,6 +164,7 @@ const showOrderConversation = (order: BuyerOrder) => {
 const showOrderRating = async (order: BuyerOrder) => {
   selectedOrderId.value = order.orderId || ''
   detailTab.value = 'ratings'
+  if (!isRateDetailsEnabled(order.xianyuAccountId)) return
   if (!order.orderId || ratingMap.value[order.orderId]?.synced) return
   const requestId = detailRequestId.value
   ratingLoading.value = true
@@ -375,13 +381,14 @@ onMounted(async () => {
               </section>
 
               <section v-else class="rating-list">
-                <div v-if="ratingLoading" class="sync-tip">正在从闲鱼同步双方真实评价...</div>
+                <div v-if="detail.orders.some(order => !isRateDetailsEnabled(order.xianyuAccountId))" class="sync-tip">该账号已关闭评价详情同步</div>
+                <div v-else-if="ratingLoading" class="sync-tip">正在从闲鱼同步双方真实评价...</div>
                 <article v-for="order in detail.orders.filter(item => !selectedOrderId || item.orderId === selectedOrderId)" :key="order.id" class="rating-card">
                   <header>
                     <span><strong>{{ order.goodsTitle || '未命名商品' }}</strong><small>订单 {{ order.orderId || '-' }}</small></span>
                     <span class="rating-status">
                       {{ ratingMap[order.orderId || '']?.statusText || (order.rateStatus === 1 ? '商家已评价' : '尚未同步') }}
-                      <button v-if="order.orderId && !ratingMap[order.orderId]?.synced" @click="showOrderRating(order)">同步双方评价</button>
+                      <button v-if="order.orderId && isRateDetailsEnabled(order.xianyuAccountId) && !ratingMap[order.orderId]?.synced" @click="showOrderRating(order)">同步双方评价</button>
                     </span>
                   </header>
                   <div class="rating-columns">
