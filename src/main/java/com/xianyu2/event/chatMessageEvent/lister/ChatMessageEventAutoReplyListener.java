@@ -9,6 +9,7 @@ import com.xianyu2.service.BuyerProfileService;
 import com.xianyu2.service.reply.HumanTakeoverManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.scheduling.annotation.Async;
@@ -55,6 +56,9 @@ public class ChatMessageEventAutoReplyListener {
 
     @Autowired
     private BuyerProfileService buyerProfileService;
+
+    @Value("${app.auto-reply.max-message-age-seconds:120}")
+    private long maxMessageAgeSeconds;
     
     /**
      * 处理聊天消息接收事件 - 判断并触发自动回复
@@ -129,6 +133,16 @@ public class ChatMessageEventAutoReplyListener {
                         message.getXianyuAccountId(), message.getXyGoodsId());
                 return;
             }
+
+            if (!isRecentMessage(message)) {
+                long now = System.currentTimeMillis();
+                Long messageTime = message.getMessageTime();
+                Long ageSeconds = messageTime == null ? null : (now - messageTime) / 1000;
+                log.info("【账号{}】消息已过期或缺少消息时间，跳过自动回复: pnmId={}, sId={}, messageTime={}, now={}, ageSeconds={}, maxAgeSeconds={}",
+                        message.getXianyuAccountId(), message.getPnmId(), message.getSId(), messageTime, now,
+                        ageSeconds, maxMessageAgeSeconds);
+                return;
+            }
             
             log.info("【账号{}】检测到用户消息（非自己发送），提交延时回复任务: xyGoodsId={}, sId={}, content={}", 
                     message.getXianyuAccountId(), message.getXyGoodsId(), 
@@ -142,5 +156,14 @@ public class ChatMessageEventAutoReplyListener {
             log.error("【账号{}】处理自动回复事件异常: pnmId={}", 
                     message.getXianyuAccountId(), message.getPnmId(), e);
         }
+    }
+
+    private boolean isRecentMessage(ChatMessageData message) {
+        Long messageTime = message.getMessageTime();
+        if (messageTime == null) {
+            return false;
+        }
+        long maxAgeMillis = maxMessageAgeSeconds * 1000L;
+        return messageTime >= System.currentTimeMillis() - maxAgeMillis;
     }
 }
