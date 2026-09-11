@@ -44,6 +44,17 @@ public class ChatMessagePersistenceService {
     }
 
     /**
+     * 同步平台完整历史时，以平台消息的事件时间和原始载荷纠正已存在记录。
+     */
+    @Transactional
+    public int savePlatformHistory(XianyuChatMessage message, String ownUserId) {
+        prepareMetadata(message);
+        int result = messageMapper.upsertPlatformHistory(message);
+        reconcileCrossSourceDuplicate(message, ownUserId);
+        return result;
+    }
+
+    /**
      * 修复已存在的会话重复记录。只会标记唯一明确匹配的记录。
      */
     @Transactional

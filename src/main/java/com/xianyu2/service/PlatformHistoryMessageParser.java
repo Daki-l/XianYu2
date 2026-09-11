@@ -32,9 +32,9 @@ public class PlatformHistoryMessageParser {
             Map<String, Object> custom = map(content.get("custom"));
             Map<String, Object> decodedContent = decodeContent(text(custom.get("data")));
 
-            // The captured conversation payload and parser contract identify createdAt as the message event time.
-            // Do not infer a timestamp from similarly named fields or from the synchronization time.
-            Long messageTime = firstLong(message, model, "createdAt");
+            // The platform history payload uses createAt as its event timestamp. Some legacy payloads use createdAt.
+            // Never replace an unavailable event timestamp with the synchronization time.
+            Long messageTime = firstLong(message, model, "createAt", "createdAt");
             if (messageTime == null) {
                 // A sync timestamp is not a message timestamp. Keeping this record would corrupt ordering.
                 continue;

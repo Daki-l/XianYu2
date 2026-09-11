@@ -35,6 +35,10 @@ import java.util.List;
 @Slf4j
 @Service
 public class ChatMessageServiceImpl implements ChatMessageService {
+
+    private static final Comparator<MsgDTO> TIMELINE_ASC = Comparator
+            .comparing(MsgDTO::getMessageTime, Comparator.nullsLast(Comparator.naturalOrder()))
+            .thenComparing(MsgDTO::getId, Comparator.nullsLast(Comparator.naturalOrder()));
     
     @Autowired
     private XianyuChatMessageMapper chatMessageMapper;
@@ -167,9 +171,10 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                         reqDTO.getXianyuAccountId(), reqDTO.getSid())) {
                     msgDTOList.add(toAutoReplyStatusDto(record));
                 }
-                msgDTOList.sort(Comparator.comparing(MsgDTO::getMessageTime,
-                        Comparator.nullsLast(Comparator.naturalOrder())).reversed());
             }
+
+            // The context API always returns a chronological timeline. Paging still selects from newest to oldest.
+            msgDTOList.sort(TIMELINE_ASC);
             
             return ResultObject.success(msgDTOList);
             
@@ -197,7 +202,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         int saved = 0;
         String ownUserId = account.getUnb();
         for (XianyuChatMessage message : messages) {
-            chatMessagePersistenceService.save(message, ownUserId);
+            chatMessagePersistenceService.savePlatformHistory(message, ownUserId);
             saved++;
         }
         return ResultObject.success(java.util.Map.of("received", history.size(), "saved", saved));

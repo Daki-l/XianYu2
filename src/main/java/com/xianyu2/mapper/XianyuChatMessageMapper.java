@@ -28,6 +28,36 @@ public interface XianyuChatMessageMapper {
             ") ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int insert(XianyuChatMessage message);
+
+    /**
+     * 历史同步使用平台原始消息回填可信字段，保留本地去重和回复来源元数据。
+     */
+    @Insert("INSERT INTO xianyu_chat_message (" +
+            "xianyu_account_id, lwp, pnm_id, s_id, " +
+            "content_type, msg_content, " +
+            "sender_user_name, sender_user_id, sender_app_v, sender_os_type, " +
+            "reminder_url, xy_goods_id, complete_msg, message_time, message_source, dedupe_fingerprint, reply_origin" +
+            ") VALUES (" +
+            "#{xianyuAccountId}, #{lwp}, #{pnmId}, #{sId}, " +
+            "#{contentType}, #{msgContent}, " +
+            "#{senderUserName}, #{senderUserId}, #{senderAppV}, #{senderOsType}, " +
+            "#{reminderUrl}, #{xyGoodsId}, #{completeMsg}, #{messageTime}, " +
+            "COALESCE(#{messageSource}, 'PLATFORM'), #{dedupeFingerprint}, #{replyOrigin}" +
+            ") ON DUPLICATE KEY UPDATE " +
+            "id = LAST_INSERT_ID(id), " +
+            "content_type = IF(message_source = 'PLATFORM', VALUES(content_type), content_type), " +
+            "msg_content = IF(message_source = 'PLATFORM', VALUES(msg_content), msg_content), " +
+            "dedupe_fingerprint = IF(message_source = 'PLATFORM', VALUES(dedupe_fingerprint), dedupe_fingerprint), " +
+            "sender_user_name = IF(message_source = 'PLATFORM', VALUES(sender_user_name), sender_user_name), " +
+            "sender_user_id = IF(message_source = 'PLATFORM', VALUES(sender_user_id), sender_user_id), " +
+            "sender_app_v = IF(message_source = 'PLATFORM', VALUES(sender_app_v), sender_app_v), " +
+            "sender_os_type = IF(message_source = 'PLATFORM', VALUES(sender_os_type), sender_os_type), " +
+            "reminder_url = IF(message_source = 'PLATFORM', VALUES(reminder_url), reminder_url), " +
+            "xy_goods_id = IF(message_source = 'PLATFORM', VALUES(xy_goods_id), xy_goods_id), " +
+            "complete_msg = IF(message_source = 'PLATFORM', VALUES(complete_msg), complete_msg), " +
+            "message_time = IF(message_source = 'PLATFORM', VALUES(message_time), message_time)")
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int upsertPlatformHistory(XianyuChatMessage message);
     
     /**
      * 根据pnm_id查询（防止重复）
@@ -147,7 +177,7 @@ public interface XianyuChatMessageMapper {
      */
     @Select("SELECT * FROM xianyu_chat_message " +
             "WHERE xianyu_account_id = #{accountId} AND s_id = #{sId} AND duplicate_status = 0 " +
-            "ORDER BY message_time DESC " +
+            "ORDER BY message_time DESC, id DESC " +
             "LIMIT #{limit} OFFSET #{offset}")
     List<XianyuChatMessage> findRecentBySId(@Param("accountId") Long accountId, @Param("sId") String sId,
                                             @Param("limit") int limit, @Param("offset") int offset);

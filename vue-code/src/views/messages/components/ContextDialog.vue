@@ -100,9 +100,9 @@ const loadContext = async (append = false) => {
     const newMessages = Array.isArray(msgList) ? msgList : []
     
     if (append) {
-      messages.value = [...newMessages.reverse(), ...messages.value]
+      messages.value = [...newMessages, ...messages.value]
     } else {
-      messages.value = newMessages.reverse()
+      messages.value = newMessages
     }
     const realMessages = newMessages.filter(message => !message.timelineType || message.timelineType === 'MESSAGE')
     realMessageCount.value = append ? realMessageCount.value + realMessages.length : realMessages.length
@@ -177,7 +177,7 @@ const refreshMessages = async () => {
       offset: 0
     })
     const msgList = res?.data || []
-    const newMessages = Array.isArray(msgList) ? msgList.reverse() : []
+    const newMessages = Array.isArray(msgList) ? msgList : []
     if (newMessages.length !== messages.value.length || JSON.stringify(newMessages) !== JSON.stringify(messages.value)) {
       messages.value = newMessages
       realMessageCount.value = newMessages.filter(message => !message.timelineType || message.timelineType === 'MESSAGE').length

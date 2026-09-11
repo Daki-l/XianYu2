@@ -32,8 +32,15 @@ class ChatMessagePersistenceServiceTest {
     @BeforeEach
     void setUp() {
         persistenceService = new ChatMessagePersistenceService(messageMapper, accountService);
-        when(accountService.getXianyuUserId(1L)).thenReturn("own-user");
+        lenient().when(accountService.getXianyuUserId(1L)).thenReturn("own-user");
         lenient().when(messageMapper.insert(any())).thenAnswer(invocation -> {
+            XianyuChatMessage message = invocation.getArgument(0);
+            if (message.getId() == null) {
+                message.setId(100L);
+            }
+            return 1;
+        });
+        lenient().when(messageMapper.upsertPlatformHistory(any())).thenAnswer(invocation -> {
             XianyuChatMessage message = invocation.getArgument(0);
             if (message.getId() == null) {
                 message.setId(100L);
@@ -57,6 +64,22 @@ class ChatMessagePersistenceServiceTest {
         verify(messageMapper).markReplyOrigin(100L, "AI");
         assertEquals("PLATFORM", platform.getMessageSource());
         assertTrue(platform.getDedupeFingerprint() != null);
+    }
+
+    @Test
+    void platformHistoryUsesDedicatedUpsertAndStillReconcilesDuplicates() {
+        XianyuChatMessage local = message(200L, 888, "own-user", 1_000L);
+        when(messageMapper.findCrossSourceCandidates(
+                1L, "sid@goofish", null, "LOCAL_AI", 888))
+                .thenReturn(List.of(local));
+
+        XianyuChatMessage platform = message(null, 1, "own-user", 2_000L);
+        persistenceService.savePlatformHistory(platform, "own-user");
+
+        verify(messageMapper).upsertPlatformHistory(platform);
+        verify(messageMapper, never()).insert(platform);
+        verify(messageMapper).markDuplicate(200L, 100L);
+        verify(messageMapper).markReplyOrigin(100L, "AI");
     }
 
     @Test

@@ -116,7 +116,6 @@ const conversations = computed(() => {
 })
 
 const selected = computed(() => conversations.value.find(item => item.sid === selectedSid.value) || conversations.value[0])
-const orderedContext = computed(() => [...contextMessages.value].reverse())
 const incomingCount = computed(() => messageList.value.filter(message => message.senderUserId !== getCurrentAccountUnb.value).length)
 
 const scrollToBottom = () => nextTick(() => {
@@ -342,7 +341,7 @@ onBeforeUnmount(() => {
 
           <div ref="messagesRef" class="chat__messages">
             <div v-if="contextLoading" class="chat__loading">正在读取完整会话…</div>
-            <template v-for="message in orderedContext" :key="`${message.timelineType || 'MESSAGE'}-${message.id}`">
+            <template v-for="message in contextMessages" :key="`${message.timelineType || 'MESSAGE'}-${message.id}`">
               <article v-if="isTimelineStatus(message)" class="chat__timeline-status">
                 <span>{{ statusLabel(message) }}</span>
                 <p v-if="message.statusReason">{{ message.statusReason }}</p>
@@ -356,7 +355,7 @@ onBeforeUnmount(() => {
                 <time>{{ formatMessageTime(message.messageTime) }}</time>
               </article>
             </template>
-            <div v-if="!contextLoading && !orderedContext.length" class="workbench__empty">暂无历史消息</div>
+            <div v-if="!contextLoading && !contextMessages.length" class="workbench__empty">暂无历史消息</div>
           </div>
 
           <footer class="chat__composer">
