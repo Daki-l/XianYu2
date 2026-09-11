@@ -46,6 +46,7 @@ public class PlatformPublishService {
     private final GoodsInfoService goodsInfoService;
     private final PlatformMarketplaceParser responseParser;
     private final PublishAddressCatalog addressCatalog;
+    private final GuestMtopTokenService guestMtopTokenService;
 
     public PlatformPublishService(PlaywrightManager playwrightManager,
                                   AccountService accountService,
@@ -53,7 +54,8 @@ public class PlatformPublishService {
                                   XianyuApiCallUtils apiCallUtils,
                                   RiskControlService riskControlService,
                                   ImageUploadService imageUploadService,
-                                  GoodsInfoService goodsInfoService) {
+                                  GoodsInfoService goodsInfoService,
+                                  GuestMtopTokenService guestMtopTokenService) {
         this.playwrightManager = playwrightManager;
         this.accountService = accountService;
         this.objectMapper = objectMapper;
@@ -63,6 +65,7 @@ public class PlatformPublishService {
         this.goodsInfoService = goodsInfoService;
         this.responseParser = new PlatformMarketplaceParser(objectMapper);
         this.addressCatalog = new PublishAddressCatalog(objectMapper);
+        this.guestMtopTokenService = guestMtopTokenService;
     }
 
     public Map<String, Object> publish(MerchantResource material, Long accountId) {
@@ -295,15 +298,16 @@ public class PlatformPublishService {
         if (keyword == null || keyword.isBlank()) {
             throw new IllegalArgumentException("请输入商品关键词");
         }
+        int safePageNumber = Math.max(1, pageNumber);
+        int safeLimit = Math.max(1, Math.min(limit, 50));
         if (accountId == null) {
-            throw new IllegalArgumentException("请选择用于搜索的账号");
+            // 免账号调研：走游客令牌，不消耗账号登录态
+            return searchAsGuest(keyword, safePageNumber, safeLimit);
         }
         String cookieText = accountService.getCookieByAccountId(accountId);
         if (cookieText == null || cookieText.isBlank()) {
             throw new IllegalStateException("账号Cookie不可用");
         }
-        int safePageNumber = Math.max(1, pageNumber);
-        int safeLimit = Math.max(1, Math.min(limit, 50));
         Map<String, Object> data = buildSearchRequest(keyword, safePageNumber, safeLimit);
         XianyuApiCallUtils.ApiCallResult result = apiCallUtils.callApiWithRetry(
                 accountId,
@@ -321,6 +325,37 @@ public class PlatformPublishService {
         PlatformMarketplaceParser.SearchPage page = responseParser.parseSearchPageResponse(
                 result.getResponse(), safeLimit, safePageNumber > 1);
         return new PlatformSearchResult(page.items(), safePageNumber, safeLimit, page.hasMore(), page.total());
+    }
+
+    /**
+     * 游客态搜索：仅用于商机调研，不关联账号、不触发账号风控记账与Cookie刷新。
+     */
+    private PlatformSearchResult searchAsGuest(String keyword, int pageNumber, int limit) {
+        Map<String, Object> data = buildSearchRequest(keyword, pageNumber, limit);
+        String response = guestMtopTokenService.callAsGuest(
+                "mtop.taobao.idlemtopsearch.pc.search",
+                data,
+                Map.of(
+                        "spm_cnt", "a21ybx.search.0.0",
+                        "spm_pre", "a21ybx.home.searchInput.0"
+                ));
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> responseMap = objectMapper.readValue(response, Map.class);
+            @SuppressWarnings("unchecked")
+            List<String> ret = (List<String>) responseMap.get("ret");
+            String retCode = (ret == null || ret.isEmpty()) ? "" : ret.get(0);
+            if (retCode.contains("SUCCESS")) {
+                PlatformMarketplaceParser.SearchPage page = responseParser.parseSearchPageResponse(
+                        response, limit, pageNumber > 1);
+                return new PlatformSearchResult(page.items(), pageNumber, limit, page.hasMore(), page.total());
+            }
+            throw new IllegalStateException("平台搜索失败: " + retCode);
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("平台搜索响应解析失败: " + e.getMessage(), e);
+        }
     }
 
     public PlatformSearchResult crawlShop(String shopUrl, Long accountId, int pageNumber, int limit) {

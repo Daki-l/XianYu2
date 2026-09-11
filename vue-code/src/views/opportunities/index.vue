@@ -58,7 +58,6 @@ const publishAddress = computed<PublishAddress>({
 const loadAccounts = async () => {
   const response = await getAccountList()
   accounts.value = response.data?.accounts || []
-  accountId.value ||= accounts.value[0]?.id
 }
 
 const resetResults = () => {
@@ -74,12 +73,12 @@ const resetResults = () => {
 const search = async (append = false) => {
   if (sourceMode.value === 'keyword' && !keyword.value.trim()) return toast.error('请输入商品关键词')
   if (sourceMode.value === 'shop' && !shopUrl.value.trim()) return toast.error('请输入闲鱼店铺链接')
-  if (!accountId.value) return toast.error('请选择搜索账号')
+  if (sourceMode.value === 'shop' && !accountId.value) return toast.error('店铺采集需要选择账号')
   if (append) loadingMore.value = true
   else loading.value = true
   try {
     const targetPage = append ? pageNumber.value + 1 : 1
-    const common = { xianyuAccountId: accountId.value, pageNumber: targetPage, limit: 30 }
+    const common = { pageNumber: targetPage, limit: 30, ...(accountId.value ? { xianyuAccountId: accountId.value } : {}) }
     const response = sourceMode.value === 'keyword'
       ? await searchOpportunities({ ...common, keyword: keyword.value })
       : await crawlShopOpportunities({ ...common, shopUrl: shopUrl.value })
@@ -111,6 +110,7 @@ const toggle = (item: OpportunityCandidate) => {
 
 const capture = async () => {
   if (!selectedCandidates.value.length) return toast.error('至少选择一个候选商品')
+  if (!accountId.value) return toast.error('整理商品详情需要选择一个账号')
   const response = await importOpportunities({ candidates: selectedCandidates.value, xianyuAccountId: accountId.value })
   const item = selectedCandidates.value[0]!
   const collected: Record<string, any> = response.data?.[0]?.data || item
@@ -204,6 +204,7 @@ onMounted(loadAccounts)
       <div class="opportunity__search-pane">
         <div class="workbench__card workbench__toolbar">
           <select v-model="accountId" class="workbench__select opportunity__account">
+            <option :value="0">游客模式（搜索免登录）</option>
             <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option>
           </select>
           <select v-model="sourceMode" class="workbench__select opportunity__mode" @change="resetResults">
