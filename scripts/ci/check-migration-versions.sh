@@ -37,6 +37,28 @@ for migration_path in "${base_migrations[@]}"; do
   base_migration_paths["$migration_path"]=1
 done
 
+# 已发布迁移属于数据库历史记录的一部分；即使仅改注释也会改变 Flyway checksum。
+# 新增迁移可以继续走下面的版本校验，但基线中存在的迁移不得修改、重命名或删除。
+immutable_failed=0
+for migration_path in "${base_migrations[@]}"; do
+  if ! git cat-file -e "${head_ref}:${migration_path}" 2>/dev/null; then
+    echo "Migration immutability check failed: existing migration was removed or renamed: ${migration_path}" >&2
+    immutable_failed=1
+    continue
+  fi
+  base_blob="$(git rev-parse "${base_ref}:${migration_path}")"
+  head_blob="$(git rev-parse "${head_ref}:${migration_path}")"
+  if [[ "$base_blob" != "$head_blob" ]]; then
+    echo "Migration immutability check failed: existing migration was modified: ${migration_path}" >&2
+    immutable_failed=1
+  fi
+done
+
+if [[ "$immutable_failed" -ne 0 ]]; then
+  echo 'Existing Flyway migrations are immutable. Add a new higher-version migration instead.' >&2
+  exit 1
+fi
+
 declare -a base_versions=()
 declare -a head_versions=()
 declare -a new_migrations=()

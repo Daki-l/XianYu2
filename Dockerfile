@@ -1,3 +1,9 @@
+# syntax=docker/dockerfile:1.7
+
+# Playwright Chromium 已预构建到独立镜像；版本必须与 pom.xml 中的 Java Playwright 依赖一致。
+ARG PLAYWRIGHT_BASE_IMAGE=ghcr.io/daki-l/xianyu2-playwright:v1.61.0
+FROM ${PLAYWRIGHT_BASE_IMAGE} AS playwright-browser
+
 # ===== 多阶段构建 =====
 
 # 阶段1: 构建前端
@@ -26,6 +32,9 @@ COPY .mvn/ .mvn/
 COPY mvnw mvnw.cmd pom.xml ./
 RUN chmod +x mvnw
 
+# 单独解析依赖，业务源码变更时复用 Maven 缓存。
+RUN --mount=type=cache,target=/root/.m2/repository ./mvnw -B -DskipTests dependency:go-offline
+
 # 复制后端源码
 COPY src/ src/
 # 复制前端构建产物到 static 目录
@@ -33,12 +42,8 @@ COPY --from=frontend-build /app/vue-code/../src/main/resources/static src/main/r
 # 行政区划数据由Maven作为后端资源打包。
 COPY vue-code/src/data/ vue-code/src/data/
 
-# 构建 JAR并执行测试
-RUN --mount=type=cache,target=/root/.m2/repository ./mvnw clean package
-
-# 预置 Playwright Chromium，保证容器内的 Cookie 与 Token 维护功能可用
-RUN --mount=type=cache,target=/root/.m2/repository ./mvnw dependency:build-classpath -Dmdep.outputFile=target/classpath.txt \
-    && PLAYWRIGHT_BROWSERS_PATH=/ms-playwright java -cp "target/classes:$(cat target/classpath.txt)" com.microsoft.playwright.CLI install chromium
+# 测试由 CI 的独立 test Job 执行；镜像阶段只负责编译和打包，不再重复编译测试代码。
+RUN --mount=type=cache,target=/root/.m2/repository ./mvnw -B -Dmaven.test.skip=true package
 
 # 阶段3: 运行时镜像
 FROM eclipse-temurin:21-jre-jammy
@@ -67,7 +72,7 @@ RUN groupadd --system xianyu2 && useradd --system --gid xianyu2 --home-dir /app 
 
 # 从构建阶段复制 JAR
 COPY --from=backend-build --chown=xianyu2:xianyu2 /app/target/xianyu2-2.0.7.jar app.jar
-COPY --from=backend-build --chown=xianyu2:xianyu2 /ms-playwright /app/ms-playwright
+COPY --from=playwright-browser --chown=xianyu2:xianyu2 /ms-playwright /app/ms-playwright
 
 # 暴露端口
 EXPOSE 12400

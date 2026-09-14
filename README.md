@@ -183,6 +183,18 @@ flowchart LR
 
 每个正式 Release 会自动发布 `linux/amd64` 镜像到 GitHub Container Registry。固定版本适合生产部署，`latest` 适合体验最新正式版本。
 
+### 自动部署门禁与 Playwright 基础镜像
+
+推送到 `main` 的运行时变更会依次执行 Flyway 校验、独立 Maven 测试、业务镜像构建，以及带临时 MySQL 8.4 的容器启动烟测。只有镜像内应用完成数据库迁移且 `/actuator/health` 返回 `UP`，工作流才会连接生产服务器部署。部署失败时会保留容器状态、Actuator 响应和最近日志，并按 Flyway、Spring Bean、数据库连接或健康检查分类后自动回滚。
+
+Playwright Chromium 使用版本锁定的 `ghcr.io/daki-l/xianyu2-playwright:v<Playwright版本>` 基础镜像，不再随每次业务镜像构建下载。仅在以下内容改变时，工作流才重建基础镜像：
+
+- `Dockerfile.playwright-base`；
+- `Dockerfile` 中的 Playwright 基础镜像引用；
+- `pom.xml` 中的 `com.microsoft.playwright:playwright` 版本。
+
+三处版本必须完全一致，CI 会在构建前校验。升级 Playwright 时应同步更新 `pom.xml`、`Dockerfile.playwright-base` 和 `Dockerfile` 的基础镜像标签，并确认 GHCR 中 `xianyu2-playwright` 包的读取权限与业务镜像一致。仅文档、图片和设计资料的 `main` 分支提交会跳过生产构建与部署。
+
 ```bash
 docker pull ghcr.io/daki-l/xianyu2:v2.0.7
 docker pull ghcr.io/daki-l/xianyu2:latest

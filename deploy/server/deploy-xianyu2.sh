@@ -50,6 +50,15 @@ wait_for_healthy() {
 }
 
 report_deployment_diagnostics() {
+  local container_state='unavailable'
+  local app_logs=''
+  local health_response=''
+
+  container_state="$(docker inspect "$container_name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+  app_logs="$(docker logs --tail 200 "$container_name" 2>&1 || true)"
+  health_response="$(curl --silent --show-error http://127.0.0.1:12400/actuator/health 2>&1 || true)"
+
+  echo "DEPLOYMENT_FAILURE_CATEGORY=$(classify_deployment_failure "$app_logs" "${container_state:-unavailable}" "$health_response")" >&2
   echo 'Deployment health check failed. Collecting diagnostics before rollback.' >&2
   if ! docker inspect "$container_name" \
     --format 'container status={{.State.Status}} exit_code={{.State.ExitCode}} error={{.State.Error}} started_at={{.State.StartedAt}} finished_at={{.State.FinishedAt}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
@@ -59,8 +68,28 @@ report_deployment_diagnostics() {
 
   echo 'Container health details:' >&2
   docker inspect "$container_name" --format '{{json .State.Health}}' 2>&1 || true
+  echo 'Actuator health response:' >&2
+  printf '%s\n' "$health_response" >&2
   echo 'Recent application logs (last 200 lines):' >&2
-  docker logs --tail 200 "$container_name" 2>&1 || true
+  printf '%s\n' "$app_logs" >&2
+}
+
+classify_deployment_failure() {
+  local app_logs="$1"
+  local container_state="$2"
+  local health_response="$3"
+
+  if grep -Eqi 'Flyway|Migration checksum mismatch|Validate failed|migration failed' <<< "$app_logs"; then
+    printf 'FLYWAY_MIGRATION_FAILURE\n'
+  elif grep -Eqi 'BeanCreationException|UnsatisfiedDependencyException|No default constructor|NoSuchMethodException|Error creating bean' <<< "$app_logs"; then
+    printf 'SPRING_BEAN_CREATION_FAILURE\n'
+  elif grep -Eqi 'Communications link failure|Access denied|Connection refused|Could not create connection|JDBCConnectionException|SQLNonTransientConnectionException' <<< "$app_logs"; then
+    printf 'DATABASE_CONNECTIVITY_FAILURE\n'
+  elif [[ "$container_state" != 'healthy' ]] || ! grep -Eq '"status"[[:space:]]*:[[:space:]]*"UP"' <<< "$health_response"; then
+    printf 'APPLICATION_HEALTHCHECK_FAILURE\n'
+  else
+    printf 'UNKNOWN_DEPLOY_FAILURE\n'
+  fi
 }
 
 parse_command() {
@@ -125,8 +154,19 @@ report_deployment_diagnostics
 if [[ -n "$previous_image" ]]; then
   echo 'Deployment failed; restoring the previous image.' >&2
   update_app_image "$previous_image"
-  compose up -d --no-build --force-recreate app
-  wait_for_healthy || echo 'Rollback health check failed.' >&2
+  if compose up -d --no-build --force-recreate app && wait_for_healthy; then
+    rollback_image="$(docker inspect "$container_name" --format '{{.Config.Image}}' 2>/dev/null || true)"
+    printf 'ROLLBACK_RESULT=success\nROLLBACK_IMAGE=%s\n' "${rollback_image:-unavailable}" >&2
+  else
+    echo 'ROLLBACK_RESULT=failure' >&2
+  fi
+else
+  echo 'ROLLBACK_RESULT=skipped_no_previous_image' >&2
 fi
+
+final_image="$(docker inspect "$container_name" --format '{{.Config.Image}}' 2>/dev/null || true)"
+final_health="$(docker inspect "$container_name" --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>/dev/null || true)"
+printf 'FINAL_RUNNING_IMAGE=%s\nFINAL_CONTAINER_HEALTH=%s\n' \
+  "${final_image:-unavailable}" "${final_health:-unavailable}" >&2
 
 exit 1

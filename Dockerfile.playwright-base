@@ -1,0 +1,11 @@
+# 仅保存与 Playwright 版本绑定的 Chromium 文件；业务镜像按版本标签复制该层。
+ARG PLAYWRIGHT_VERSION=1.61.0
+FROM mcr.microsoft.com/playwright/java:v${PLAYWRIGHT_VERSION}-jammy AS playwright-browser
+
+FROM scratch
+
+LABEL org.opencontainers.image.title="XianYu2 Playwright Chromium"
+LABEL org.opencontainers.image.description="Pinned Chromium browser files for XianYu2"
+LABEL org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0"
+
+COPY --from=playwright-browser /ms-playwright /ms-playwright

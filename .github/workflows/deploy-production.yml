@@ -4,15 +4,34 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - '*.md'
+      - '**/*.md'
+      - 'docs/**'
+      - '**/*.png'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+      - '**/*.gif'
+      - '**/*.webp'
+      - '**/*.svg'
+      - '**/*.pdf'
+      - 'LICENSE'
+      - 'CHANGELOG.md'
+      - 'DISCLAIMER.md'
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
-  group: xianyu2-production
+  # PR 校验与 main 生产部署必须隔离，避免 PR 新任务取消正在进行的生产发布。
+  group: xianyu2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ghcr.io/daki-l/xianyu2
+  PLAYWRIGHT_BASE_IMAGE: ghcr.io/daki-l/xianyu2-playwright
 
 jobs:
   migration-check:
@@ -28,7 +47,7 @@ jobs:
 
       - name: Check migration versions
         env:
-          BASE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
           base_sha="$BASE_SHA"
@@ -37,8 +56,105 @@ jobs:
           fi
           bash scripts/ci/check-migration-versions.sh "$base_sha" "$HEAD_SHA"
 
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Java and Maven cache
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run Maven tests
+        run: ./mvnw -B test
+
+  playwright-base-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      should-build: ${{ steps.config.outputs.should-build }}
+      version: ${{ steps.config.outputs.version }}
+
+    steps:
+      - name: Check out source and history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Validate Playwright base image configuration
+        id: config
+        env:
+          BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          base_sha="$BASE_SHA"
+          if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
+            base_sha="$(git rev-parse "${HEAD_SHA}^")"
+          fi
+          version="$(bash scripts/ci/check-playwright-base.sh --version "$HEAD_SHA")"
+          should_build="$(bash scripts/ci/check-playwright-base.sh --changed "$base_sha" "$HEAD_SHA")"
+          printf 'version=%s\nshould-build=%s\n' "$version" "$should_build" >> "$GITHUB_OUTPUT"
+
+  playwright-base:
+    needs:
+      - test
+      - playwright-base-check
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.test.result == 'success' &&
+      needs.playwright-base-check.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Playwright browser base image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile.playwright-base
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.PLAYWRIGHT_BASE_IMAGE }}:v${{ needs.playwright-base-check.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=XianYu2 Playwright Chromium browser layer
+          cache-from: type=gha,scope=playwright-base
+          cache-to: type=gha,mode=max,scope=playwright-base
+
   build:
-    needs: migration-check
+    needs:
+      - migration-check
+      - test
+      - playwright-base
+    if: >-
+      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
+      needs.migration-check.result == 'success' &&
+      needs.test.result == 'success' &&
+      (needs.playwright-base.result == 'success' || needs.playwright-base.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -76,9 +192,44 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy:
+  smoke-test:
     needs: build
-    if: github.ref == 'refs/heads/main'
+    if: needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Check out smoke test script
+        uses: actions/checkout@v6
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image by immutable digest
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: docker pull "$IMAGE@$DIGEST"
+
+      - name: Start application and verify actuator health
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
+
+  deploy:
+    needs:
+      - build
+      - smoke-test
+    if: >-
+      always() && github.ref == 'refs/heads/main' &&
+      needs.build.result == 'success' && needs.smoke-test.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
