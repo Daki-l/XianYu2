@@ -149,7 +149,7 @@ export function searchOpportunities(data: {
   return request<OpportunitySearchPage>({ url: '/merchant/opportunities/search', method: 'POST', data })
 }
 
-export function getSellerPublicProfile(data: { itemId: string; xianyuAccountId: number }) {
+export function getSellerPublicProfile(data: { itemId: string; xianyuAccountId?: number }) {
   return request<SellerPublicProfile>({
     url: '/merchant/opportunities/seller-profile',
     method: 'POST',

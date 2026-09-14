@@ -1,145 +1,252 @@
 package com.xianyu2.service;
 
-import com.xianyu2.utils.HttpClientUtils;
-import com.xianyu2.utils.XianyuApiUtils;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xianyu2.context.TenantContext;
+import com.xianyu2.utils.SessionCookieJar;
 import com.xianyu2.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.HttpHeaders;
+import okhttp3.FormBody;
+import okhttp3.HttpUrl;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
+import java.io.IOException;
+import java.time.Clock;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 /**
- * 闲鱼 mtop 游客令牌服务
+ * 闲鱼游客只读会话。
  *
- * 商机搜索等只读调研场景不依赖账号 Cookie：先向 h5api 网关发起一次空令牌请求，
- * 从响应 Set-Cookie 中领取游客 _m_h5_tk 并缓存，之后按 mtop 标准签名直接调用。
- * 令牌过期（FAIL_SYS_TOKEN_EXPIRED）时自动重新领取并重试一次。
+ * <p>该会话不读取、不写入账号 Cookie，也不会调用账号风控或写操作。当前只开放经过验证的
+ * 商品搜索和商品详情两个公开读取能力；不要把任意 mtop API 暴露为游客调用。</p>
  */
 @Slf4j
 @Service
 public class GuestMtopTokenService {
 
     private static final String BASE_URL = "https://h5api.m.goofish.com/h5/";
-    /** 用于领取游客令牌的轻量接口，与正式调用保持同域 */
-    private static final String BOOTSTRAP_API = "mtop.gaia.nodejs.gaia.idle.data.gw.v2.index.get";
+    private static final String APP_KEY = "34839810";
+    private static final long RISK_COOLDOWN_MILLIS = 60_000L;
+    private static final long SYSTEM_SESSION_KEY = 0L;
 
-    private String cachedCookie;
-    private long cachedExpireAt;
+    private final ObjectMapper objectMapper;
+    private final HttpUrl baseUrl;
+    private final Clock clock;
+    private final Supplier<Long> tenantIdSupplier;
+    private final ConcurrentMap<Long, GuestSession> sessions = new ConcurrentHashMap<>();
 
-    /**
-     * 以游客身份调用 mtop 接口，返回响应体文本。
-     *
-     * @param apiName  接口名，例如 mtop.taobao.idlemtopsearch.pc.search
-     * @param dataMap  业务参数
-     * @param extraQueryParams 附加 URL 参数
-     * @return 响应体
-     */
-    public synchronized String callAsGuest(String apiName, Map<String, Object> dataMap,
-                                           Map<String, String> extraQueryParams) {
-        String cookie = getGuestCookie(false);
-        String body = doCall(apiName, dataMap, cookie, extraQueryParams);
-        if (body == null) {
-            throw new IllegalStateException("平台搜索请求失败，请稍后重试");
-        }
-        if (body.contains("FAIL_SYS_TOKEN_EXPIRED") || body.contains("FAIL_SYS_TOKEN_EXOIRED")) {
-            log.info("游客令牌过期，重新领取后重试: apiName={}", apiName);
-            cookie = getGuestCookie(true);
-            body = doCall(apiName, dataMap, cookie, extraQueryParams);
-            if (body == null) {
-                throw new IllegalStateException("平台搜索请求失败，请稍后重试");
-            }
-        }
-        return body;
+    public GuestMtopTokenService(ObjectMapper objectMapper) {
+        this(objectMapper, HttpUrl.get(BASE_URL), Clock.systemUTC(), TenantContext::get);
     }
 
-    /**
-     * 获取游客 Cookie（含 _m_h5_tk / _m_h5_tk_enc），过期或强制刷新时重新领取。
-     */
-    private synchronized String getGuestCookie(boolean forceRefresh) {
-        if (!forceRefresh && cachedCookie != null && System.currentTimeMillis() < cachedExpireAt) {
-            return cachedCookie;
-        }
-        // 签名中的时间戳必须与 t 参数使用同一取值，否则网关校验不通过
-        long timestamp = System.currentTimeMillis();
-        String timestampText = String.valueOf(timestamp);
-        Map<String, String> params = new HashMap<>();
-        params.put("jsv", "2.7.4");
-        params.put("appKey", "34839810");
-        params.put("t", timestampText);
-        params.put("sign", XianyuSignUtils.generateSign(timestampText, "", "{}"));
-        params.put("v", "1.0");
-        params.put("type", "originaljson");
-        params.put("dataType", "json");
-        params.put("api", BOOTSTRAP_API);
-        params.put("timeout", "20000");
+    GuestMtopTokenService(ObjectMapper objectMapper,
+                          HttpUrl baseUrl,
+                          Clock clock,
+                          Supplier<Long> tenantIdSupplier) {
+        this.objectMapper = objectMapper;
+        this.baseUrl = baseUrl;
+        this.clock = clock;
+        this.tenantIdSupplier = tenantIdSupplier;
+    }
 
-        StringBuilder url = new StringBuilder(BASE_URL).append(BOOTSTRAP_API).append("/1.0/?");
-        for (Map.Entry<String, String> entry : params.entrySet()) {
-            if (url.charAt(url.length() - 1) != '?') {
-                url.append('&');
-            }
-            url.append(entry.getKey()).append('=').append(entry.getValue());
-        }
+    /** 游客关键词搜索。 */
+    public String search(Map<String, Object> requestData) {
+        return call(PublicReadOperation.SEARCH, requestData);
+    }
 
-        Map<String, String> headers = XianyuApiUtils.buildStandardHeaders("");
-        Map<String, String> body = new HashMap<>();
-        body.put("data", "{}");
-
-        HttpClientUtils.HttpResponseResult result = HttpClientUtils.postWithHeaders(
-                url.toString(), headers, body);
-        if (result == null || result.getHeaders() == null) {
-            throw new IllegalStateException("无法领取平台游客令牌，请稍后重试");
+    /** 游客商品详情查询。 */
+    public String itemDetail(String itemId) {
+        if (itemId == null || !itemId.matches("\\d{8,}")) {
+            throw new IllegalArgumentException("商品ID格式无效");
         }
-        HttpHeaders responseHeaders = result.getHeaders();
-        List<String> setCookies = responseHeaders.get(HttpHeaders.SET_COOKIE);
-        if (setCookies == null || setCookies.isEmpty()) {
-            throw new IllegalStateException("平台未返回游客令牌，请稍后重试");
-        }
+        return call(PublicReadOperation.ITEM_DETAIL, Map.of("itemId", itemId));
+    }
 
-        String token = null;
-        String tokenEnc = null;
-        for (String setCookie : setCookies) {
-            for (String pair : setCookie.split(";")) {
-                String trimmed = pair.trim();
-                if (trimmed.startsWith("_m_h5_tk=")) {
-                    token = trimmed.substring("_m_h5_tk=".length());
-                } else if (trimmed.startsWith("_m_h5_tk_enc=")) {
-                    tokenEnc = trimmed.substring("_m_h5_tk_enc=".length());
+    private String call(PublicReadOperation operation, Map<String, Object> requestData) {
+        GuestSession session = currentSession();
+        if (!session.requestPermit.tryAcquire()) {
+            throw new GuestReadUnavailableException("游客查询繁忙，请稍后重试");
+        }
+        try {
+            assertAvailable(session);
+            String tokenBeforeRequest = session.cookieJar.getMh5tkToken();
+            String response = execute(session, operation, requestData);
+            if (isTokenError(response)) {
+                String refreshedToken = session.cookieJar.getMh5tkToken();
+                if (refreshedToken.isBlank() || refreshedToken.equals(tokenBeforeRequest)) {
+                    throw new IllegalStateException("游客会话未取得有效令牌，请稍后重试");
                 }
+                // 仅在 mtop 响应实际下发新令牌后重试一次，避免重复无效请求。
+                log.debug("游客会话令牌已刷新，执行一次标准重试: operation={}", operation);
+                response = execute(session, operation, requestData);
             }
-        }
-        if (token == null || token.isBlank()) {
-            throw new IllegalStateException("平台未返回游客令牌，请稍后重试");
-        }
-
-        StringBuilder cookieBuilder = new StringBuilder("_m_h5_tk=").append(token);
-        if (tokenEnc != null && !tokenEnc.isBlank()) {
-            cookieBuilder.append("; _m_h5_tk_enc=").append(tokenEnc);
-        }
-        cachedCookie = cookieBuilder.toString();
-        // _m_h5_tk 形如 "{token}_{过期毫秒}"，默认按 24 小时兜底
-        long expireAt = System.currentTimeMillis() + 24L * 60 * 60 * 1000;
-        int split = token.lastIndexOf('_');
-        if (split > 0) {
-            try {
-                expireAt = Long.parseLong(token.substring(split + 1));
-            } catch (NumberFormatException ignored) {
-                // 保留兜底过期时间
+            if (isRiskLimited(response)) {
+                session.cooldownUntil = clock.millis() + RISK_COOLDOWN_MILLIS;
+                log.warn("游客只读会话被平台暂时限流，进入 {} 秒冷却: tenantId={}, operation={}",
+                        RISK_COOLDOWN_MILLIS / 1000, session.tenantId, operation);
+                throw new GuestReadUnavailableException("游客查询暂时不可用，请稍后重试或选择已登录账号");
             }
+            if (!isSuccess(response)) {
+                throw new IllegalStateException("游客查询失败: " + responseCode(response));
+            }
+            return response;
+        } finally {
+            session.requestPermit.release();
         }
-        // 提前 10 分钟视为过期，避免边界失败
-        cachedExpireAt = expireAt - 10L * 60 * 1000;
-        log.info("已领取平台游客令牌，有效期至: {}", cachedExpireAt);
-        return cachedCookie;
     }
 
-    private String doCall(String apiName, Map<String, Object> dataMap, String cookie,
-                          Map<String, String> extraQueryParams) {
-        XianyuApiUtils.ApiCallResultWithHeaders result = XianyuApiUtils.callApiWithHeaders(
-                apiName, dataMap, cookie, null, null, null, extraQueryParams);
-        return result.getBody();
+    private GuestSession currentSession() {
+        Long tenantId = tenantIdSupplier.get();
+        long sessionKey = tenantId == null ? SYSTEM_SESSION_KEY : tenantId;
+        return sessions.computeIfAbsent(sessionKey, key -> new GuestSession(key, createHttpClient()));
+    }
+
+    private OkHttpClient createHttpClient() {
+        // 游客请求要在浏览器请求超时前结束，避免服务端继续占用会话。
+        return new OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(25, TimeUnit.SECONDS)
+                .writeTimeout(10, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .build();
+    }
+
+    private String execute(GuestSession session, PublicReadOperation operation, Map<String, Object> requestData) {
+        try {
+            String dataJson = objectMapper.writeValueAsString(requestData);
+            String timestamp = String.valueOf(clock.millis());
+            String sign = XianyuSignUtils.generateSign(timestamp, session.cookieJar.getMh5tkToken(), dataJson);
+            HttpUrl.Builder url = baseUrl.newBuilder()
+                    .addPathSegment(operation.apiName)
+                    .addPathSegment("1.0")
+                    .addPathSegment("")
+                    .addQueryParameter("jsv", "2.7.2")
+                    .addQueryParameter("appKey", APP_KEY)
+                    .addQueryParameter("t", timestamp)
+                    .addQueryParameter("sign", sign)
+                    .addQueryParameter("v", "1.0")
+                    .addQueryParameter("type", "originaljson")
+                    .addQueryParameter("accountSite", "xianyu")
+                    .addQueryParameter("dataType", "json")
+                    .addQueryParameter("timeout", "20000")
+                    .addQueryParameter("api", operation.apiName)
+                    .addQueryParameter("sessionOption", "AutoLoginOnly");
+            operation.extraQueryParameters.forEach(url::addQueryParameter);
+
+            Request request = new Request.Builder()
+                    .url(url.build())
+                    .header("Accept", "application/json, text/plain, */*")
+                    .header("Accept-Language", "zh-CN,zh;q=0.9")
+                    .header("Origin", "https://www.goofish.com")
+                    .header("Referer", "https://www.goofish.com/")
+                    .post(new FormBody.Builder().add("data", dataJson).build())
+                    .build();
+            try (Response response = session.httpClient.newCall(request).execute()) {
+                return response.body() == null ? "" : response.body().string();
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("游客会话请求失败，请稍后重试", e);
+        } catch (Exception e) {
+            throw new IllegalStateException("游客会话请求构建失败", e);
+        }
+    }
+
+    private void assertAvailable(GuestSession session) {
+        long remaining = session.cooldownUntil - clock.millis();
+        if (remaining > 0) {
+            long seconds = Math.max(1, (remaining + 999) / 1000);
+            throw new GuestReadUnavailableException("游客查询暂时不可用，请约 " + seconds + " 秒后重试或选择已登录账号");
+        }
+    }
+
+    private boolean isTokenError(String response) {
+        return response != null && (response.contains("FAIL_SYS_TOKEN_EXPIRED")
+                || response.contains("FAIL_SYS_TOKEN_EXOIRED")
+                || response.contains("FAIL_SYS_TOKEN_EMPTY"));
+    }
+
+    private boolean isRiskLimited(String response) {
+        if (response == null) {
+            return false;
+        }
+        String value = response.toUpperCase();
+        return value.contains("RGV") || value.contains("SM::")
+                || value.contains("FAIL_SYS_TRAFFIC_LIMIT") || response.contains("被挤爆");
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean isSuccess(String response) {
+        if (response == null || response.isBlank()) {
+            return false;
+        }
+        try {
+            Map<String, Object> root = objectMapper.readValue(response, Map.class);
+            Object ret = root.get("ret");
+            return ret instanceof List<?> values && !values.isEmpty()
+                    && String.valueOf(values.getFirst()).contains("SUCCESS");
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private String responseCode(String response) {
+        if (response == null || response.isBlank()) {
+            return "响应为空";
+        }
+        try {
+            Map<String, Object> root = objectMapper.readValue(response, Map.class);
+            Object ret = root.get("ret");
+            if (ret instanceof List<?> values && !values.isEmpty()) {
+                return String.valueOf(values.getFirst());
+            }
+        } catch (Exception ignored) {
+            // 返回通用错误，避免把 HTML 或异常正文原样返回给前端。
+        }
+        return "平台响应异常";
+    }
+
+    private enum PublicReadOperation {
+        SEARCH("mtop.taobao.idlemtopsearch.pc.search", Map.of(
+                "spm_cnt", "a21ybx.search.0.0",
+                "spm_pre", "a21ybx.home.searchInput.0")),
+        ITEM_DETAIL("mtop.taobao.idle.pc.detail", Map.of(
+                "spm_cnt", "a21ybx.im.0.0",
+                "spm_pre", "a21ybx.item.want.1"));
+
+        private final String apiName;
+        private final Map<String, String> extraQueryParameters;
+
+        PublicReadOperation(String apiName, Map<String, String> extraQueryParameters) {
+            this.apiName = apiName;
+            this.extraQueryParameters = extraQueryParameters;
+        }
+    }
+
+    private static final class GuestSession {
+        private final long tenantId;
+        private final SessionCookieJar cookieJar = new SessionCookieJar();
+        private final OkHttpClient httpClient;
+        private final Semaphore requestPermit = new Semaphore(1);
+        private volatile long cooldownUntil;
+
+        private GuestSession(long tenantId, OkHttpClient baseClient) {
+            this.tenantId = tenantId;
+            this.httpClient = baseClient.newBuilder().cookieJar(cookieJar).build();
+        }
+    }
+
+    static class GuestReadUnavailableException extends IllegalStateException {
+        GuestReadUnavailableException(String message) {
+            super(message);
+        }
     }
 }

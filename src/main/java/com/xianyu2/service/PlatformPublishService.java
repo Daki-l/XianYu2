@@ -261,14 +261,15 @@ public class PlatformPublishService {
 
     public Map<String, Object> collect(String sourceUrl, Long accountId) {
         validatePlatformUrl(sourceUrl);
-        if (accountId == null) {
-            throw new IllegalArgumentException("请选择用于采集的账号");
-        }
         Matcher matcher = GOODS_ID_PATTERN.matcher(sourceUrl);
         if (!matcher.find()) {
             throw new IllegalArgumentException("闲鱼商品链接缺少商品ID");
         }
         String itemId = matcher.group(1);
+        if (accountId == null) {
+            String response = guestMtopTokenService.itemDetail(itemId);
+            return responseParser.parseItemDetailResponse(response, itemId);
+        }
         String cookieText = accountService.getCookieByAccountId(accountId);
         if (cookieText == null || cookieText.isBlank()) {
             throw new IllegalStateException("账号Cookie不可用");
@@ -332,13 +333,7 @@ public class PlatformPublishService {
      */
     private PlatformSearchResult searchAsGuest(String keyword, int pageNumber, int limit) {
         Map<String, Object> data = buildSearchRequest(keyword, pageNumber, limit);
-        String response = guestMtopTokenService.callAsGuest(
-                "mtop.taobao.idlemtopsearch.pc.search",
-                data,
-                Map.of(
-                        "spm_cnt", "a21ybx.search.0.0",
-                        "spm_pre", "a21ybx.home.searchInput.0"
-                ));
+        String response = guestMtopTokenService.search(data);
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> responseMap = objectMapper.readValue(response, Map.class);
@@ -406,7 +401,7 @@ public class PlatformPublishService {
         data.put("sortField", "");
         data.put("customDistance", "");
         data.put("gps", "");
-        data.put("propValueStr", Map.of());
+        data.put("propValueStr", Map.of("searchFilter", ""));
         data.put("customGps", "");
         data.put("searchReqFromPage", "pcSearch");
         data.put("extraFilterValue", "{}");

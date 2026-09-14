@@ -110,8 +110,10 @@ const toggle = (item: OpportunityCandidate) => {
 
 const capture = async () => {
   if (!selectedCandidates.value.length) return toast.error('至少选择一个候选商品')
-  if (!accountId.value) return toast.error('整理商品详情需要选择一个账号')
-  const response = await importOpportunities({ candidates: selectedCandidates.value, xianyuAccountId: accountId.value })
+  const response = await importOpportunities({
+    candidates: selectedCandidates.value,
+    ...(accountId.value ? { xianyuAccountId: accountId.value } : {})
+  })
   const item = selectedCandidates.value[0]!
   const collected: Record<string, any> = response.data?.[0]?.data || item
   active.value = item
@@ -204,7 +206,7 @@ onMounted(loadAccounts)
       <div class="opportunity__search-pane">
         <div class="workbench__card workbench__toolbar">
           <select v-model="accountId" class="workbench__select opportunity__account">
-            <option :value="0">游客模式（搜索免登录）</option>
+            <option :value="0">游客模式（公开商品信息）</option>
             <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option>
           </select>
           <select v-model="sourceMode" class="workbench__select opportunity__mode" @change="resetResults">
