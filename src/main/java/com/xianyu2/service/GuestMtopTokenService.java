@@ -10,6 +10,7 @@ import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -43,6 +44,7 @@ public class GuestMtopTokenService {
     private final Supplier<Long> tenantIdSupplier;
     private final ConcurrentMap<Long, GuestSession> sessions = new ConcurrentHashMap<>();
 
+    @Autowired
     public GuestMtopTokenService(ObjectMapper objectMapper) {
         this(objectMapper, HttpUrl.get(BASE_URL), Clock.systemUTC(), TenantContext::get);
     }

@@ -8,6 +8,7 @@ import okhttp3.mockwebserver.MockWebServer;
 import okhttp3.mockwebserver.RecordedRequest;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -22,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -133,6 +135,17 @@ class GuestMtopTokenServiceTest {
         assertEquals("显卡", request.get("keyword"));
         assertEquals(2, request.get("pageNumber"));
         assertEquals(Map.of("searchFilter", ""), request.get("propValueStr"));
+    }
+
+    @Test
+    void springCanCreateTheGuestSessionBean() {
+        try (AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext()) {
+            context.registerBean(ObjectMapper.class);
+            context.register(GuestMtopTokenService.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(GuestMtopTokenService.class));
+        }
     }
 
     private void startServer() throws Exception {
