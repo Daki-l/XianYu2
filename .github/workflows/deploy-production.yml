@@ -194,7 +194,9 @@ jobs:
 
   smoke-test:
     needs: build
-    if: needs.build.result == 'success'
+    # 必须 always()：不带状态函数时，依赖闭包中被跳过的 job（如 playwright-base）
+    # 会把本 job 级联跳过，导致未改动 Playwright 的常规提交静默跳过部署。
+    if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
