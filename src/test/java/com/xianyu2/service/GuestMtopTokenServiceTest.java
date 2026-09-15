@@ -22,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -53,8 +54,12 @@ class GuestMtopTokenServiceTest {
         assertEquals("{\"ret\":[\"SUCCESS::调用成功\"],\"data\":{}}", response);
         assertEquals("/h5/mtop.taobao.idlemtopsearch.pc.search/1.0/", first.getRequestUrl().encodedPath());
         assertEquals("mtop.taobao.idlemtopsearch.pc.search", first.getRequestUrl().queryParameter("api"));
-        assertTrue(first.getHeader("Cookie") == null || first.getHeader("Cookie").isBlank());
+        // 首请求应预置设备标识cna（防平台风控拦截），但不携带令牌
+        String firstCookie = first.getHeader("Cookie");
+        assertTrue(firstCookie != null && firstCookie.matches(".*(^|; )cna=[A-Za-z0-9]{22}(;|$).*"));
+        assertFalse(firstCookie.contains("_m_h5_tk"));
         assertTrue(second.getHeader("Cookie").contains("_m_h5_tk=guest-token_1899430620000"));
+        assertTrue(second.getHeader("Cookie").contains("cna="));
         assertNotEquals(first.getRequestUrl().queryParameter("sign"), second.getRequestUrl().queryParameter("sign"));
     }
 

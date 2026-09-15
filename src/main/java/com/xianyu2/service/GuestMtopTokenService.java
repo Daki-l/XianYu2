@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -235,15 +236,29 @@ public class GuestMtopTokenService {
 
     private static final class GuestSession {
         private final long tenantId;
-        private final SessionCookieJar cookieJar = new SessionCookieJar();
+        private final SessionCookieJar cookieJar;
         private final OkHttpClient httpClient;
         private final Semaphore requestPermit = new Semaphore(1);
         private volatile long cooldownUntil;
 
         private GuestSession(long tenantId, OkHttpClient baseClient) {
             this.tenantId = tenantId;
+            // 无cna设备标识的游客请求会被平台风控直接拦截（RGV587），
+            // 会话创建时预置随机cna保证首次请求即可通过。
+            this.cookieJar = new SessionCookieJar();
+            this.cookieJar.putCookie("cna", randomDeviceToken());
             this.httpClient = baseClient.newBuilder().cookieJar(cookieJar).build();
         }
+    }
+
+    private static String randomDeviceToken() {
+        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        SecureRandom random = new SecureRandom();
+        StringBuilder token = new StringBuilder(22);
+        for (int i = 0; i < 22; i++) {
+            token.append(alphabet.charAt(random.nextInt(alphabet.length())));
+        }
+        return token.toString();
     }
 
     static class GuestReadUnavailableException extends IllegalStateException {

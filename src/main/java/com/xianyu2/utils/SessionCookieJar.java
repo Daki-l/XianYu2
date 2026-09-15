@@ -90,6 +90,15 @@ public class SessionCookieJar implements CookieJar {
     }
 
     /**
+     * 写入单个Cookie（新值覆盖旧值）
+     */
+    public synchronized void putCookie(String name, String value) {
+        if (name != null && !name.isEmpty() && value != null) {
+            cookieMap.put(name, value);
+        }
+    }
+
+    /**
      * 获取指定Cookie值
      */
     public synchronized String getCookie(String name) {
