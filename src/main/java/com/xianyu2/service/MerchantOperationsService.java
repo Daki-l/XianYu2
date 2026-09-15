@@ -190,7 +190,7 @@ public class MerchantOperationsService {
             throw new IllegalArgumentException("请输入商机关键词");
         }
         Long accountId = longValue(request.get("xianyuAccountId"));
-        validateOwnedAccount(accountId);
+        requireOwnedAccount(accountId, "请选择用于搜索的账号");
         int limit = Math.max(1, Math.min(intValue(request.get("limit"), 20), 50));
         int pageNumber = Math.max(1, intValue(request.get("pageNumber"), 1));
         PlatformPublishService.PlatformSearchResult page = platformPublishService.search(
@@ -206,7 +206,7 @@ public class MerchantOperationsService {
 
     public Map<String, Object> getSellerPublicProfile(Map<String, Object> request) {
         Long accountId = longValue(request.get("xianyuAccountId"));
-        validateOwnedAccount(accountId);
+        requireOwnedAccount(accountId, "请选择用于查看卖家口碑的账号");
         String itemId = text(request.get("itemId"));
         if (!itemId.matches("\\d{8,}")) {
             throw new IllegalArgumentException("商品ID格式无效");
@@ -231,7 +231,7 @@ public class MerchantOperationsService {
             throw new IllegalArgumentException("请输入闲鱼店铺链接");
         }
         Long accountId = longValue(request.get("xianyuAccountId"));
-        validateOwnedAccount(accountId);
+        requireOwnedAccount(accountId, "请选择用于采集的账号");
         int limit = Math.max(1, Math.min(intValue(request.get("limit"), 20), 50));
         int pageNumber = Math.max(1, intValue(request.get("pageNumber"), 1));
         PlatformPublishService.PlatformSearchResult page = platformPublishService.crawlShop(
@@ -300,7 +300,7 @@ public class MerchantOperationsService {
     @Transactional
     public List<MerchantResourceRespDTO> importOpportunities(Map<String, Object> request) {
         Long accountId = longValue(request.get("xianyuAccountId"));
-        validateOwnedAccount(accountId);
+        requireOwnedAccount(accountId, "请选择用于导入的账号");
         if (!(request.get("candidates") instanceof List<?> candidates) || candidates.isEmpty()) {
             throw new IllegalArgumentException("请选择需要加入货源库的商品");
         }
@@ -335,6 +335,9 @@ public class MerchantOperationsService {
                 supply = createSupply(candidate, accountId);
             } else {
                 existing.setName(limitName(text(candidate.get("title"))));
+                if (existing.getXianyuAccountId() == null) {
+                    existing.setXianyuAccountId(accountId);
+                }
                 existing.setDataJson(writeJson(candidate));
                 resourceMapper.updateById(existing);
                 supply = existing;
@@ -1223,6 +1226,13 @@ public class MerchantOperationsService {
         if (accountId != null && accountMapper.selectById(accountId) == null) {
             throw new IllegalArgumentException("账号不存在或无权访问");
         }
+    }
+
+    private void requireOwnedAccount(Long accountId, String missingAccountMessage) {
+        if (accountId == null) {
+            throw new IllegalArgumentException(missingAccountMessage);
+        }
+        validateOwnedAccount(accountId);
     }
 
     private Long requireTenantId() {

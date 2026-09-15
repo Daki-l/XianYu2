@@ -70,12 +70,6 @@
             <artifactId>okhttp</artifactId>
             <version>4.12.0</version>
         </dependency>
-        <dependency>
-            <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>mockwebserver</artifactId>
-            <version>4.12.0</version>
-            <scope>test</scope>
-        </dependency>
         <!-- 添加到pom.xml的dependencies部分 -->
         <dependency>
             <groupId>com.google.zxing</groupId>

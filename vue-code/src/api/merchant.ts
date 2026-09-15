@@ -142,14 +142,14 @@ export function settleDistribution(id: number) {
 
 export function searchOpportunities(data: {
   keyword: string
-  xianyuAccountId?: number
+  xianyuAccountId: number
   pageNumber?: number
   limit?: number
 }) {
   return request<OpportunitySearchPage>({ url: '/merchant/opportunities/search', method: 'POST', data })
 }
 
-export function getSellerPublicProfile(data: { itemId: string; xianyuAccountId?: number }) {
+export function getSellerPublicProfile(data: { itemId: string; xianyuAccountId: number }) {
   return request<SellerPublicProfile>({
     url: '/merchant/opportunities/seller-profile',
     method: 'POST',
@@ -160,14 +160,14 @@ export function getSellerPublicProfile(data: { itemId: string; xianyuAccountId?:
 
 export function crawlShopOpportunities(data: {
   shopUrl: string
-  xianyuAccountId?: number
+  xianyuAccountId: number
   pageNumber?: number
   limit?: number
 }) {
   return request<OpportunitySearchPage>({ url: '/merchant/opportunities/shop', method: 'POST', data })
 }
 
-export function importOpportunities(data: { candidates: OpportunityCandidate[]; xianyuAccountId?: number }) {
+export function importOpportunities(data: { candidates: OpportunityCandidate[]; xianyuAccountId: number }) {
   return request<MerchantResource[]>({ url: '/merchant/opportunities/import', method: 'POST', data })
 }
 

@@ -70,15 +70,13 @@ const hasValue = (value?: string | number) => value != null && value !== ''
 const selectedSellerProfile = computed(() => selectedSellerItem.value ? profileFor(selectedSellerItem.value) : undefined)
 
 const loadSellerProfile = async (item: OpportunityCandidate) => {
+  if (!accountId.value) return
   const key = profileKey(item)
   if (sellerProfiles.value[key] || sellerProfileLoading.value.has(key)) return
   sellerProfileLoading.value = new Set([...sellerProfileLoading.value, key])
   sellerProfileErrors.value.delete(key)
   try {
-    const response = await getSellerPublicProfile({
-      itemId: item.itemId,
-      ...(accountId.value ? { xianyuAccountId: accountId.value } : {})
-    })
+    const response = await getSellerPublicProfile({ itemId: item.itemId, xianyuAccountId: accountId.value })
     if (!response.data) throw new Error(response.msg || '该商品暂未返回卖家口碑')
     const profile = { ...profileFor(item), ...response.data }
     const profiles = { ...sellerProfiles.value, [key]: profile }
@@ -101,9 +99,11 @@ const showSellerProfile = (item: OpportunityCandidate) => {
 const loadAccounts = async () => {
   const response = await getAccountList()
   accounts.value = response.data?.accounts || []
+  accountId.value ||= accounts.value[0]?.id
 }
 
 const search = async () => {
+  if (!accountId.value) return toast.warning('请选择用于比价的账号')
   if (!keyword.value.trim()) return toast.warning('请输入需要比价的商品关键词')
   if (minPrice.value !== '' && maxPrice.value !== '' && minPrice.value > maxPrice.value) {
     return toast.warning('最低价不能高于最高价')
@@ -111,10 +111,10 @@ const search = async () => {
   loading.value = true
   try {
     const response = await searchOpportunities({
+      xianyuAccountId: accountId.value,
       keyword: keyword.value,
       pageNumber: 1,
-      limit: 50,
-      ...(accountId.value ? { xianyuAccountId: accountId.value } : {})
+      limit: 50
     })
     results.value = response.data?.items || []
     platformTotal.value = Number(response.data?.total || results.value.length)
@@ -148,7 +148,6 @@ onMounted(loadAccounts)
 
     <div class="workbench__card comparison__search">
       <select v-model="accountId" class="workbench__select">
-        <option :value="undefined">游客模式（公开商品信息）</option>
         <option v-for="account in accounts" :key="account.id" :value="account.id">{{ account.accountNote || account.unb }}</option>
       </select>
       <input v-model="keyword" class="workbench__input" placeholder="输入商品关键词，例如：iPhone 15 256G" @keyup.enter="search">
@@ -226,7 +225,7 @@ onMounted(loadAccounts)
             && !hasValue(selectedSellerProfile.sellerNeutralCount)
             && !hasValue(selectedSellerProfile.sellerNegativeCount)" class="comparison__dialog-note">
             {{ sellerProfileErrors.has(profileKey(selectedSellerItem))
-              ? '当前搜索正常；本次商品详情未开放卖家统计，不代表查询异常。'
+              ? '当前账号搜索正常；本次商品详情未开放卖家统计，不代表账号异常。'
               : '该商品公开数据中没有返回卖家信用或口碑统计。' }}
           </p>
           <p class="comparison__dialog-note">只展示平台返回的卖家历史统计；评价文字与图片在卖家公开主页查看。</p>
