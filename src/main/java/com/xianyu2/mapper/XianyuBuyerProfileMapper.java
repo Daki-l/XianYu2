@@ -35,6 +35,20 @@ public interface XianyuBuyerProfileMapper extends BaseMapper<XianyuBuyerProfile>
               @Param("buyerUserName") String buyerUserName,
               @Param("interactionTime") LocalDateTime interactionTime);
 
+    @Insert("INSERT INTO xianyu_buyer_profile (tenant_id, xianyu_account_id, buyer_user_id, " +
+            "buyer_user_name, buyer_avatar_url, platform_profile_json, profile_fetched_at) VALUES " +
+            "(#{tenantId}, #{accountId}, #{buyerUserId}, #{buyerUserName}, #{buyerAvatarUrl}, " +
+            "#{platformProfileJson}, NOW(3)) ON DUPLICATE KEY UPDATE " +
+            "buyer_user_name = COALESCE(NULLIF(VALUES(buyer_user_name), ''), buyer_user_name), " +
+            "buyer_avatar_url = COALESCE(NULLIF(VALUES(buyer_avatar_url), ''), buyer_avatar_url), " +
+            "platform_profile_json = VALUES(platform_profile_json), profile_fetched_at = NOW(3)")
+    int touchPlatformProfile(@Param("tenantId") Long tenantId,
+                             @Param("accountId") Long accountId,
+                             @Param("buyerUserId") String buyerUserId,
+                             @Param("buyerUserName") String buyerUserName,
+                             @Param("buyerAvatarUrl") String buyerAvatarUrl,
+                             @Param("platformProfileJson") String platformProfileJson);
+
     @Select("<script>" +
             "SELECT profile.*, " +
             "(SELECT COUNT(*) FROM xianyu_chat_message message WHERE message.xianyu_account_id = profile.xianyu_account_id " +

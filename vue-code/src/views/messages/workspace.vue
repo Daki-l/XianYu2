@@ -31,6 +31,7 @@ const {
 const selectedSid = ref('')
 const searchText = ref('')
 const profiles = ref<Record<string, ConversationProfile>>({})
+const loadedProfileKeys = ref(new Set<string>())
 const failedImages = ref(new Set<string>())
 const contextMessages = ref<ChatMessage[]>([])
 const contextLoading = ref(false)
@@ -241,29 +242,28 @@ watch(conversations, value => {
 
 watch(selectedAccountId, () => {
   profiles.value = {}
+  loadedProfileKeys.value = new Set()
   failedImages.value = new Set()
   synchronizedSessions.value = new Set()
 })
-
-watch([selectedAccountId, messageList], async () => {
-  if (!selectedAccountId.value) return
-  const accountId = selectedAccountId.value
-  const sessionIds = [...new Set(messageList.value.map(message => message.sid).filter(Boolean))]
-    .filter(sid => !profiles.value[sid])
-  for (let index = 0; index < sessionIds.length; index += 20) {
-    const response = await getConversationProfiles({
-      xianyuAccountId: accountId,
-      sessionIds: sessionIds.slice(index, index + 20)
-    })
-    if (selectedAccountId.value !== accountId) return
-    for (const profile of response.data || []) profiles.value[profile.sid] = profile
-  }
-}, { deep: false })
 
 watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) => {
   contextMessages.value = []
   await loadQuickReplies()
   if (!accountId || !sid) return
+  const profileKey = `${accountId}:${sid}`
+  if (!loadedProfileKeys.value.has(profileKey)) {
+    try {
+      const response = await getConversationProfiles({ xianyuAccountId: accountId, sessionIds: [sid] })
+      if (selectedAccountId.value === accountId) {
+        for (const profile of response.data || []) profiles.value[profile.sid] = profile
+        loadedProfileKeys.value = new Set([...loadedProfileKeys.value, profileKey])
+      }
+    } catch {
+      // 查询失败时保留消息中的昵称和文字头像；后端会短暂缓存失败结果，避免反复请求平台。
+      loadedProfileKeys.value = new Set([...loadedProfileKeys.value, profileKey])
+    }
+  }
   const key = `${accountId}:${sid}`
   await loadConversationContext(!synchronizedSessions.value.has(key))
 }, { immediate: true })

@@ -3,17 +3,20 @@ package com.xianyu2.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyu2.entity.XianyuAccount;
+import com.xianyu2.entity.XianyuBuyerProfile;
 import com.xianyu2.mapper.XianyuAccountMapper;
+import com.xianyu2.mapper.XianyuBuyerProfileMapper;
 import com.xianyu2.utils.XianyuApiCallUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.ArrayList;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 会话买家资料查询
@@ -23,13 +26,15 @@ import java.util.concurrent.ConcurrentHashMap;
 public class PlatformConversationProfileService {
 
     private static final long CACHE_SECONDS = 1800;
-    private static final int MAX_SESSIONS = 20;
+    private static final long FAILED_CACHE_SECONDS = 300;
 
     private final XianyuAccountMapper accountMapper;
+    private final XianyuBuyerProfileMapper buyerProfileMapper;
     private final AccountService accountService;
     private final XianyuApiCallUtils apiCallUtils;
     private final ObjectMapper objectMapper;
     private final Map<String, CachedProfile> cache = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<Map<String, Object>>> inFlight = new ConcurrentHashMap<>();
 
     public List<Map<String, Object>> query(Long accountId, List<String> sessionIds) {
         XianyuAccount account = accountId == null ? null : accountMapper.selectById(accountId);
@@ -39,22 +44,65 @@ public class PlatformConversationProfileService {
         if (sessionIds == null || sessionIds.isEmpty()) {
             return List.of();
         }
-        String cookie = accountService.getCookieByAccountId(accountId);
-        if (cookie == null || cookie.isBlank()) {
-            throw new IllegalStateException("账号Cookie不可用");
+        List<String> ids = sessionIds.stream().filter(value -> value != null && !value.isBlank()).distinct().toList();
+        if (ids.size() != 1) {
+            throw new IllegalArgumentException("一次只能查询一个会话资料");
         }
-        List<Map<String, Object>> result = new ArrayList<>();
-        sessionIds.stream().filter(value -> value != null && !value.isBlank()).distinct().limit(MAX_SESSIONS)
-                .forEach(sessionId -> result.add(queryOne(accountId, cookie, sessionId)));
-        return result;
+        return List.of(queryOne(account, ids.getFirst()));
     }
 
-    private Map<String, Object> queryOne(Long accountId, String cookie, String sessionId) {
+    private Map<String, Object> queryOne(XianyuAccount account, String sessionId) {
+        Long accountId = account.getId();
         String cacheKey = accountId + ":" + sessionId;
         CachedProfile cached = cache.get(cacheKey);
         if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
             return cached.profile();
         }
+        Map<String, Object> persisted = recentPersistedProfile(accountId, sessionId);
+        if (persisted != null) {
+            cacheProfile(cacheKey, persisted, CACHE_SECONDS);
+            return persisted;
+        }
+
+        CompletableFuture<Map<String, Object>> created = new CompletableFuture<>();
+        CompletableFuture<Map<String, Object>> existing = inFlight.putIfAbsent(cacheKey, created);
+        if (existing != null) {
+            return existing.join();
+        }
+        try {
+            String cookie = accountService.getCookieByAccountId(accountId);
+            if (cookie == null || cookie.isBlank()) {
+                Map<String, Object> failed = emptyProfile(sessionId);
+                cacheProfile(cacheKey, failed, FAILED_CACHE_SECONDS);
+                created.complete(failed);
+                return failed;
+            }
+            Map<String, Object> profile = fetchProfile(account, cookie, sessionId);
+            boolean loaded = !String.valueOf(profile.get("avatar")).isBlank()
+                    || !String.valueOf(profile.get("nick")).isBlank();
+            cacheProfile(cacheKey, profile, loaded ? CACHE_SECONDS : FAILED_CACHE_SECONDS);
+            created.complete(profile);
+            return profile;
+        } catch (Exception e) {
+            Map<String, Object> failed = emptyProfile(sessionId);
+            cacheProfile(cacheKey, failed, FAILED_CACHE_SECONDS);
+            created.complete(failed);
+            return failed;
+        } finally {
+            inFlight.remove(cacheKey, created);
+        }
+    }
+
+    private void cacheProfile(String cacheKey, Map<String, Object> profile, long seconds) {
+        if (cache.size() >= 1000) {
+            Instant now = Instant.now();
+            cache.entrySet().removeIf(entry -> entry.getValue().expiresAt().isBefore(now));
+        }
+        cache.put(cacheKey, new CachedProfile(profile, Instant.now().plusSeconds(seconds)));
+    }
+
+    private Map<String, Object> fetchProfile(XianyuAccount account, String cookie, String sessionId) {
+        Long accountId = account.getId();
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("type", 0);
         request.put("sessionType", 1);
@@ -67,24 +115,58 @@ public class PlatformConversationProfileService {
                         "spm_pre", "a21ybx.home.sidebar.2.0",
                         "log_id", accountId + "-" + sessionId + "-" + System.currentTimeMillis()
                 ));
-        Map<String, Object> profile = new LinkedHashMap<>();
-        profile.put("sid", sessionId);
+        Map<String, Object> profile = emptyProfile(sessionId);
         if (response.isSuccess()) {
             Map<String, Object> user = extractUser(response.getResponse());
             profile.put("avatar", https(firstValue(user, "logo", "avatar")));
             profile.put("nick", firstValue(user, "nick", "nickname"));
-        } else {
-            profile.put("avatar", "");
-            profile.put("nick", "");
+            persistProfile(account, sessionId, profile, user);
         }
-        Map<String, Object> immutable = Map.copyOf(profile);
-        if (!String.valueOf(immutable.get("avatar")).isBlank() || !String.valueOf(immutable.get("nick")).isBlank()) {
-            if (cache.size() > 1000) {
-                cache.entrySet().removeIf(entry -> entry.getValue().expiresAt().isBefore(Instant.now()));
-            }
-            cache.put(cacheKey, new CachedProfile(immutable, Instant.now().plusSeconds(CACHE_SECONDS)));
+        return Map.copyOf(profile);
+    }
+
+    private Map<String, Object> recentPersistedProfile(Long accountId, String sessionId) {
+        XianyuBuyerProfile profile = buyerProfileMapper.findByBuyer(accountId, normalizeBuyerUserId(sessionId));
+        if (profile == null || profile.getProfileFetchedAt() == null
+                || profile.getProfileFetchedAt().atZone(ZoneId.systemDefault()).toInstant()
+                .isBefore(Instant.now().minusSeconds(CACHE_SECONDS))) {
+            return null;
         }
-        return immutable;
+        Map<String, Object> result = emptyProfile(sessionId);
+        result.put("avatar", safe(profile.getBuyerAvatarUrl()));
+        result.put("nick", safe(profile.getBuyerUserName()));
+        return Map.copyOf(result);
+    }
+
+    private void persistProfile(XianyuAccount account, String sessionId, Map<String, Object> profile,
+                                Map<String, Object> rawUser) {
+        String nick = String.valueOf(profile.get("nick"));
+        String avatar = String.valueOf(profile.get("avatar"));
+        if (nick.isBlank() && avatar.isBlank()) {
+            return;
+        }
+        try {
+            buyerProfileMapper.touchPlatformProfile(account.getTenantId(), account.getId(),
+                    normalizeBuyerUserId(sessionId), nick, avatar, objectMapper.writeValueAsString(rawUser));
+        } catch (Exception e) {
+            // 平台查询已成功，档案落库失败不应让页面资料变空。
+        }
+    }
+
+    private Map<String, Object> emptyProfile(String sessionId) {
+        Map<String, Object> profile = new LinkedHashMap<>();
+        profile.put("sid", sessionId);
+        profile.put("avatar", "");
+        profile.put("nick", "");
+        return profile;
+    }
+
+    private String normalizeBuyerUserId(String sessionId) {
+        return sessionId.replace("@goofish", "").trim();
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private Map<String, Object> extractUser(String response) {

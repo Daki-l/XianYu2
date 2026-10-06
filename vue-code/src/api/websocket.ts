@@ -87,6 +87,15 @@ export function clearCaptchaWait(accountId: number) {
   });
 }
 
+/** 人工确认后解除账号的平台风控冷却。 */
+export function clearRiskGuard(accountId: number) {
+  return request<string>({
+    url: '/websocket/risk-guard/clear',
+    method: 'POST',
+    data: { xianyuAccountId: accountId }
+  })
+}
+
 export type CaptchaSolveMode = 'AUTO' | 'MANUAL_BROWSER';
 
 export type CaptchaSolveStatus =

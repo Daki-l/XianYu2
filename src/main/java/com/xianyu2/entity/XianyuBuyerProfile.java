@@ -27,6 +27,10 @@ public class XianyuBuyerProfile {
 
     private String buyerUserName;
 
+    private String buyerAvatarUrl;
+
+    private String platformProfileJson;
+
     private String tagsJson;
 
     private String note;
@@ -36,6 +40,8 @@ public class XianyuBuyerProfile {
     private String blockedReason;
 
     private LocalDateTime lastInteractionTime;
+
+    private LocalDateTime profileFetchedAt;
 
     private LocalDateTime createTime;
 

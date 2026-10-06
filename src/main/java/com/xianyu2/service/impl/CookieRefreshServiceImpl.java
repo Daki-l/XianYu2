@@ -15,6 +15,7 @@ import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuCookieMapper;
 import com.xianyu2.service.CookieRefreshService;
 import com.xianyu2.service.OperationLogService;
+import com.xianyu2.service.RiskControlService;
 import com.xianyu2.utils.SessionCookieJar;
 import com.xianyu2.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +59,9 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
     @Autowired(required = false)
     private com.xianyu2.service.EmailNotifyService emailNotifyService;
+
+    @Autowired
+    private RiskControlService riskControlService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -183,48 +187,16 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 }
 
                 String responseBody = response.body().string();
-                log.debug("【账号{}】hasLogin响应: {}", accountId, responseBody);
+                log.debug("【账号{}】hasLogin响应已收到，长度={}", accountId, responseBody.length());
 
                 // 检测风控（参考Python实现）
-                boolean isRiskControl = responseBody != null && (
-                    responseBody.contains("RGV587_ERROR") ||
-                    responseBody.contains("被挤爆啦") ||
-                    responseBody.contains("FAIL_SYS_RGV587_ERROR"));
+                boolean isRiskControl = responseBody != null
+                        && riskControlService.detectRiskControl(Map.of("message", responseBody));
 
                 if (isRiskControl) {
-                    log.error("【账号{}】❌ hasLogin触发风控: {}", accountId, responseBody);
-                    log.error("【账号{}】系统目前无法自动解决，请进入闲鱼网页版-点击消息-过滑块-复制最新的Cookie", accountId);
-                    
-                    // 标记为失效（风控）
-                    cookieMapper.update(null,
-                            new LambdaUpdateWrapper<XianyuCookie>()
-                                    .eq(XianyuCookie::getXianyuAccountId, accountId)
-                                    .set(XianyuCookie::getCookieStatus, 3) // 3表示失效（风控）
-                    );
-
-                    // 记录操作日志
-                    operationLogService.log(accountId,
-                            OperationConstants.Type.VERIFY,
-                            OperationConstants.Module.COOKIE,
-                            "hasLogin触发风控验证，需要人工处理滑块",
-                            OperationConstants.Status.FAIL,
-                            OperationConstants.TargetType.COOKIE,
-                            String.valueOf(accountId),
-                            null, null, "触发风控", null);
-
-                    // 发送邮件通知
-                    try {
-                        XianyuAccount account = accountMapper.selectById(accountId);
-                        String accountNote = account != null ? account.getAccountNote() : null;
-                        if (emailNotifyService != null) {
-                            emailNotifyService.sendCaptchaRequiredEmail(accountId, accountNote, "hasLogin时触发风控验证");
-                        }
-                    } catch (Exception e) {
-                        log.error("【账号{}】发送风控验证邮件通知失败", accountId, e);
-                    }
-
-                    throw new com.xianyu2.exception.CaptchaRequiredException(
-                        "触发风控，请进入闲鱼网页版过滑块后更新Cookie");
+                    riskControlService.recordResponse(accountId, Map.of("message", responseBody));
+                    log.warn("【账号{}】hasLogin命中平台风控，已开启固定冷却，Cookie状态保持不变", accountId);
+                    return false;
                 }
 
                 @SuppressWarnings("unchecked")
@@ -345,6 +317,11 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                 // 通过hasLogin接口刷新Cookie
                 boolean success = doCheckLoginStatus(accountId, true); // 主动刷新，记录日志
                 if (!success) {
+                    if (riskControlService.getStatus(accountId).state()
+                            == RiskControlService.GuardState.CIRCUIT_OPEN) {
+                        log.warn("【账号{}】平台风控冷却中，跳过浏览器兜底刷新Cookie", accountId);
+                        return false;
+                    }
                     log.warn("【账号{}】hasLogin刷新失败，开始触发浏览器兜底刷新Cookie", accountId);
                     operationLogService.log(accountId,
                             OperationConstants.Type.REFRESH,

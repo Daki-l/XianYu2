@@ -2,7 +2,8 @@ package com.xianyu2.websocket;
 
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.websocket.handler.*;
-import com.xianyu2.service.AccountService;
+import com.xianyu2.service.RiskControlService;
+import com.xianyu2.service.TokenRefreshService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -31,12 +32,15 @@ public class WebSocketMessageRouter {
     @Autowired(required = false)
     private List<AbstractLwpHandler> handlers;
 
-    @Autowired
-    private AccountService accountService;
-
     @Lazy
     @Autowired
     private WebSocketService webSocketService;
+
+    @Autowired
+    private TokenRefreshService tokenRefreshService;
+
+    @Autowired
+    private RiskControlService riskControlService;
     
     /**
      * 延迟初始化处理器
@@ -112,6 +116,8 @@ public class WebSocketMessageRouter {
                 handleResponseMessage(accountId, messageData);
                 return;
             }
+
+            handlePlatformResponseStatus(accountId, messageData);
             
             // 查找对应的处理器
             AbstractLwpHandler handler = handlerMap.get(lwp);
@@ -165,17 +171,25 @@ public class WebSocketMessageRouter {
                 }
                 
                 log.debug("【账号{}】收到成功响应(200)", accountId);
-            } else if (codeValue == 401) {
-                log.error("【账号{}】Token失效(401)，需要重新获取Token", accountId);
-                updateCookieStatusIfPresent(accountId, 2);
-            } else if (codeValue == 500) {
-                log.error("【账号{}】服务器错误(500)", accountId);
-                updateCookieStatusIfPresent(accountId, 2);
+            } else if (codeValue == 401 || codeValue == 500) {
+                handlePlatformResponseStatus(accountId, messageData);
             } else {
                 log.warn("【账号{}】未知响应码: {}", accountId, code);
             }
         } catch (Exception e) {
             log.warn("【账号{}】解析响应码失败: {}", accountId, code);
+        }
+    }
+
+    private void handlePlatformResponseStatus(String accountId, Map<String, Object> messageData) {
+        int codeValue = parseResponseCode(messageData.get("code"));
+        if (codeValue == 401) {
+            // 401 只能说明当前 WebSocket Token 不可用，不能据此断言 Cookie 已过期。
+            refreshWebSocketToken(accountId);
+        } else if (codeValue == 500) {
+            // 500 常见于平台临时拒绝或繁忙。保留 Cookie 状态，并在命中明确风控文案时开启冷却。
+            recordRiskSignal(accountId, messageData);
+            log.warn("【账号{}】WebSocket服务端错误(500)，Cookie状态保持不变", accountId);
         }
     }
 
@@ -235,12 +249,30 @@ public class WebSocketMessageRouter {
         }
     }
 
-    private void updateCookieStatusIfPresent(String accountId, int status) {
+    private void refreshWebSocketToken(String accountId) {
         try {
             Long id = Long.parseLong(accountId);
-            accountService.updateCookieStatus(id, status);
+            boolean refreshed = tokenRefreshService.refreshWebSocketToken(id);
+            if (refreshed) {
+                log.info("【账号{}】WebSocket Token已刷新，将由连接自愈流程恢复", accountId);
+            } else {
+                log.warn("【账号{}】WebSocket Token刷新失败，Cookie状态保持不变", accountId);
+            }
         } catch (NumberFormatException e) {
             log.warn("无法解析accountId: {}", accountId);
+        } catch (Exception e) {
+            log.warn("【账号{}】刷新WebSocket Token异常，Cookie状态保持不变: {}", accountId,
+                    e.getClass().getSimpleName());
+        }
+    }
+
+    private void recordRiskSignal(String accountId, Map<String, Object> messageData) {
+        try {
+            riskControlService.recordResponse(Long.parseLong(accountId), messageData);
+        } catch (NumberFormatException e) {
+            log.warn("无法解析accountId: {}", accountId);
+        } catch (Exception e) {
+            log.debug("【账号{}】记录WebSocket风控信号失败: {}", accountId, e.getClass().getSimpleName());
         }
     }
     

@@ -21,6 +21,8 @@ public class BuyerProfileRespDTO {
 
     private String buyerUserName;
 
+    private String buyerAvatarUrl;
+
     @JsonIgnore
     private String tagsJson;
 

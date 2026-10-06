@@ -67,6 +67,13 @@ public interface RiskControlService {
     void clearCircuit(Long accountId);
 
     /**
+     * 管理员确认后手动解除账号的平台风控冷却。
+     *
+     * @param accountId 账号ID
+     */
+    void forceClearCircuit(Long accountId);
+
+    /**
      * 获取账号当前护栏状态
      *
      * @param accountId 账号ID

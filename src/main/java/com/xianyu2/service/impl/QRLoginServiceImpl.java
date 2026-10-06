@@ -114,7 +114,7 @@ public class QRLoginServiceImpl implements QRLoginService {
                     String[] parts = cookie.split(";")[0].split("=", 2);
                     if (parts.length == 2) {
                         session.getCookies().put(parts[0], parts[1]);
-                        log.debug("提取到Cookie: {} = {}", parts[0], parts[1].substring(0, Math.min(20, parts[1].length())));
+                        log.debug("提取到Cookie字段: {}", parts[0]);
                     }
                 }
                 
@@ -123,7 +123,7 @@ public class QRLoginServiceImpl implements QRLoginService {
                 String token = "";
                 if (mh5tk != null && mh5tk.contains("_")) {
                     token = mh5tk.split("_")[0];
-                    log.info("提取到_m_h5_tk token: {}", token.substring(0, Math.min(10, token.length())));
+                    log.info("已提取_m_h5_tk token");
                 } else {
                     log.warn("未找到_m_h5_tk，当前cookies: {}", session.getCookies().keySet());
                 }
@@ -521,7 +521,7 @@ public class QRLoginServiceImpl implements QRLoginService {
                                 // 恢复之前获取的 _m_h5_tk（如果响应中没有新的）
                                 if (existingMh5tk != null && !session.getCookies().containsKey("_m_h5_tk")) {
                                     session.getCookies().put("_m_h5_tk", existingMh5tk);
-                                    log.info("✅ 恢复之前获取的_m_h5_tk: {}", existingMh5tk.substring(0, Math.min(20, existingMh5tk.length())));
+                                    log.info("✅ 已恢复之前获取的_m_h5_tk");
                                 }
                                 if (existingMh5tkEnc != null && !session.getCookies().containsKey("_m_h5_tk_enc")) {
                                     session.getCookies().put("_m_h5_tk_enc", existingMh5tkEnc);
@@ -667,7 +667,7 @@ public class QRLoginServiceImpl implements QRLoginService {
             if (mH5Tk == null || mH5Tk.isEmpty()) {
                 log.warn("⚠️ Cookie中缺少_m_h5_tk字段！这可能导致后续API调用失败");
             } else {
-                log.info("✅ _m_h5_tk已包含: {}", mH5Tk.substring(0, Math.min(20, mH5Tk.length())));
+                log.info("✅ Cookie已包含_m_h5_tk");
             }
             
             // 格式化Cookie字符串

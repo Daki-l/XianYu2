@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyu2.constants.OperationConstants;
 import com.xianyu2.service.OperationLogService;
 import com.xianyu2.service.RiskControlService;
+import com.xianyu2.service.SysSettingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,7 +29,8 @@ import java.util.Set;
 public class RiskControlServiceImpl implements RiskControlService {
 
     private static final long RATE_WINDOW_MS = 60_000L;
-    private static final long CIRCUIT_WINDOW_MS = 600_000L;
+    private static final long DEFAULT_CIRCUIT_WINDOW_MS = 30 * 60_000L;
+    private static final String COOLDOWN_MINUTES_SETTING = "platform_risk_cooldown_minutes";
     private static final Set<String> GUARDED_WRITE_APIS = Set.of(
             "mtop.idle.pc.idleitem.publish",
             "mtop.taobao.idle.item.downshelf",
@@ -37,7 +39,9 @@ public class RiskControlServiceImpl implements RiskControlService {
             "mtop.taobao.idle.merchant.rate.create",
             "mtop.idle.groupon.activity.seller.freeshipping",
             "mtop.taobao.idle.logistics.merchant.consign.dummy",
-            "mtop.taobao.idle.logistic.consign.dummy"
+            "mtop.taobao.idle.logistic.consign.dummy",
+            // 买家资料补全虽然是读接口，也必须在账号风控冷却时停止，避免继续放大平台压力。
+            "mtop.taobao.idlemessage.pc.user.query"
     );
 
     /**
@@ -67,6 +71,8 @@ public class RiskControlServiceImpl implements RiskControlService {
     private final Path stateFile;
     private final Clock clock;
     private final OperationLogService operationLogService;
+    private final SysSettingService sysSettingService;
+    private final long defaultCooldownMillis;
     private final Map<String, Long> rateLimits = new HashMap<>();
     private final Map<Long, CircuitEntry> circuits = new HashMap<>();
 
@@ -74,16 +80,27 @@ public class RiskControlServiceImpl implements RiskControlService {
     public RiskControlServiceImpl(ObjectMapper objectMapper,
                                   @Value("${app.risk-guard.state-file:${user.dir}/data/platform-risk-guard.json}")
                                   String stateFile,
-                                  OperationLogService operationLogService) {
-        this(objectMapper, Path.of(stateFile), Clock.systemUTC(), operationLogService);
+                                  OperationLogService operationLogService,
+                                  SysSettingService sysSettingService,
+                                  @Value("${app.risk-guard.cooldown-minutes:30}") long defaultCooldownMinutes) {
+        this(objectMapper, Path.of(stateFile), Clock.systemUTC(), operationLogService,
+                sysSettingService, normalizeCooldownMinutes(defaultCooldownMinutes) * 60_000L);
     }
 
     RiskControlServiceImpl(ObjectMapper objectMapper, Path stateFile, Clock clock,
                            OperationLogService operationLogService) {
+        this(objectMapper, stateFile, clock, operationLogService, null, DEFAULT_CIRCUIT_WINDOW_MS);
+    }
+
+    RiskControlServiceImpl(ObjectMapper objectMapper, Path stateFile, Clock clock,
+                           OperationLogService operationLogService,
+                           SysSettingService sysSettingService, long defaultCooldownMillis) {
         this.objectMapper = objectMapper;
         this.stateFile = stateFile;
         this.clock = clock;
         this.operationLogService = operationLogService;
+        this.sysSettingService = sysSettingService;
+        this.defaultCooldownMillis = Math.max(60_000L, defaultCooldownMillis);
         loadState();
     }
 
@@ -214,11 +231,14 @@ public class RiskControlServiceImpl implements RiskControlService {
             return;
         }
 
-        long retryAt = now() + CIRCUIT_WINDOW_MS;
         CircuitEntry current = circuits.get(accountId);
-        if (current != null && current.retryAt() > retryAt) {
-            retryAt = current.retryAt();
+        if (current != null && current.retryAt() > now()) {
+            // 冷却期间的重复信号不延长截止时间；到期后再次命中才开启下一轮固定时长冷却。
+            log.debug("【账号{}】平台风控冷却已存在，保留原截止时间: retryAt={}", accountId, current.retryAt());
+            return;
         }
+        // 每一轮冷却都从首次命中时刻开始固定时长，不叠加、也不指数延长。
+        long retryAt = now() + cooldownMillis();
         circuits.put(accountId, new CircuitEntry(retryAt, reason));
         persistState();
         log.warn("【账号{}】平台写操作熔断已开启: reason={}, remainingSeconds={}",
@@ -234,6 +254,17 @@ public class RiskControlServiceImpl implements RiskControlService {
         persistState();
         log.info("【账号{}】完整凭证已生效，平台写操作熔断已解除", accountId);
         logGuardEvent(accountId, "完整凭证生效，平台风控熔断已解除",
+                OperationConstants.Status.SUCCESS, null);
+    }
+
+    @Override
+    public synchronized void forceClearCircuit(Long accountId) {
+        if (accountId == null || circuits.remove(accountId) == null) {
+            return;
+        }
+        persistState();
+        log.warn("【账号{}】管理员已手动解除平台风控冷却", accountId);
+        logGuardEvent(accountId, "管理员手动解除平台风控冷却",
                 OperationConstants.Status.SUCCESS, null);
     }
 
@@ -287,10 +318,8 @@ public class RiskControlServiceImpl implements RiskControlService {
         if (response == null) {
             return null;
         }
-        String text = String.valueOf(response.get("ret")) + " "
-                + String.valueOf(response.get("code")) + " "
-                + String.valueOf(response.get("msg")) + " "
-                + String.valueOf(response.get("message"));
+        // WebSocket 的平台错误会嵌套在 body 中，直接扫描响应结构以识别同一类风控信号。
+        String text = String.valueOf(response);
         String normalized = text.toLowerCase();
         if (normalized.contains("rgv587")) {
             return "RGV587";
@@ -307,6 +336,11 @@ public class RiskControlServiceImpl implements RiskControlService {
         if (text.contains(RATE_LIMIT_ERROR) || text.contains("被挤爆")) {
             return "REQUEST_BUSY";
         }
+        if (text.contains("闲鱼太累了")
+                || normalized.contains("fail_biz_interceptor_unknow_err")
+                || normalized.contains("donotdetete")) {
+            return "PLATFORM_TOO_BUSY";
+        }
         if (text.contains("哎哟喂")) {
             return "PLATFORM_REJECTED";
         }
@@ -317,6 +351,26 @@ public class RiskControlServiceImpl implements RiskControlService {
             return "CAPTCHA";
         }
         return null;
+    }
+
+    private long cooldownMillis() {
+        if (sysSettingService == null) {
+            return defaultCooldownMillis;
+        }
+        try {
+            String configured = sysSettingService.getSettingValue(COOLDOWN_MINUTES_SETTING);
+            if (configured == null || configured.isBlank()) {
+                return defaultCooldownMillis;
+            }
+            return normalizeCooldownMinutes(Long.parseLong(configured.trim())) * 60_000L;
+        } catch (Exception e) {
+            log.warn("平台风控冷却时长配置无效，使用默认值: type={}", e.getClass().getSimpleName());
+            return defaultCooldownMillis;
+        }
+    }
+
+    private static long normalizeCooldownMinutes(long minutes) {
+        return Math.max(1L, Math.min(24 * 60L, minutes));
     }
 
     private String rateKey(Long accountId, WriteOperation operation) {

@@ -7,6 +7,7 @@ import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.service.AccountService;
 import com.xianyu2.service.OfflineRecoveryService;
 import com.xianyu2.service.OperationLogService;
+import com.xianyu2.service.RiskControlService;
 
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.service.WebSocketTokenService;
@@ -73,6 +74,9 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Autowired
     private OfflineRecoveryService offlineRecoveryService;
+
+    @Autowired
+    private RiskControlService riskControlService;
 
     // 存储WebSocket客户端
     private final Map<Long, XianyuWebSocketClient> webSocketClients = new ConcurrentHashMap<>();
@@ -208,7 +212,7 @@ public class WebSocketServiceImpl implements WebSocketService {
             return connectWebSocket(accountId, cookieStr, deviceId, accessToken, unb);
 
         } catch (com.xianyu2.exception.CaptchaRequiredException e) {
-            log.warn("启动WebSocket需要滑块验证: accountId={}, url={}", accountId, e.getCaptchaUrl());
+            log.warn("启动WebSocket需要滑块验证: accountId={}", accountId);
             throw e; // 重新抛出，让Controller处理
         } catch (Exception e) {
             log.error("启动WebSocket失败: accountId={}", accountId, e);
@@ -223,8 +227,7 @@ public class WebSocketServiceImpl implements WebSocketService {
             log.info("========== 使用手动Token启动WebSocket连接 ==========");
             log.info("【账号{}】accountId={}", accountId, accountId);
             log.info("【账号{}】accessToken长度={}", accountId, accessToken != null ? accessToken.length() : 0);
-            log.info("【账号{}】accessToken前50字符={}", accountId, 
-                    accessToken != null && accessToken.length() > 50 ? accessToken.substring(0, 50) + "..." : accessToken);
+            log.info("【账号{}】已提供手动accessToken", accountId);
 
             // 检查是否已经连接
             if (webSocketClients.containsKey(accountId)) {
@@ -959,6 +962,9 @@ public class WebSocketServiceImpl implements WebSocketService {
     public boolean sendMessage(Long accountId, String cid, String toId, String text) {
         try {
             log.info("发送消息: accountId={}, cid={}, toId={}, text={}", accountId, cid, toId, text);
+            if (!isPlatformActionAllowed(accountId, "发送消息")) {
+                return false;
+            }
             
             // 获取WebSocket客户端
             XianyuWebSocketClient client = webSocketClients.get(accountId);
@@ -986,6 +992,9 @@ public class WebSocketServiceImpl implements WebSocketService {
     public boolean sendMessageWithResult(Long accountId, String cid, String toId, String text) {
         try {
             log.info("发送消息(等待结果): accountId={}, cid={}, toId={}, text={}", accountId, cid, toId, text);
+            if (!isPlatformActionAllowed(accountId, "发送消息")) {
+                return false;
+            }
             
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
@@ -1028,6 +1037,9 @@ public class WebSocketServiceImpl implements WebSocketService {
         try {
             log.info("发送图片消息: accountId={}, cid={}, toId={}, url={}, size={}x{}", 
                     accountId, cid, toId, imageUrl, width, height);
+            if (!isPlatformActionAllowed(accountId, "发送图片消息")) {
+                return false;
+            }
             
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
@@ -1054,6 +1066,9 @@ public class WebSocketServiceImpl implements WebSocketService {
         try {
             log.info("发送图片消息(等待结果): accountId={}, cid={}, toId={}, url={}, size={}x{}",
                     accountId, cid, toId, imageUrl, width, height);
+            if (!isPlatformActionAllowed(accountId, "发送图片消息")) {
+                return false;
+            }
 
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
@@ -1072,6 +1087,16 @@ public class WebSocketServiceImpl implements WebSocketService {
             log.error("发送图片消息失败: accountId={}, cid={}, toId={}", accountId, cid, toId, e);
             return false;
         }
+    }
+
+    private boolean isPlatformActionAllowed(Long accountId, String action) {
+        RiskControlService.GuardStatus status = riskControlService.getStatus(accountId);
+        if (status.state() != RiskControlService.GuardState.CIRCUIT_OPEN) {
+            return true;
+        }
+        log.warn("【账号{}】{}已被平台风控冷却拦截: remainingSeconds={}, reason={}",
+                accountId, action, status.remainingSeconds(), status.reason());
+        return false;
     }
 
     /**

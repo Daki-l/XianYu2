@@ -129,6 +129,11 @@ public class WebSocketController {
      */
     private String getDetailedErrorMessage(Long xianyuAccountId) {
         try {
+            RiskControlService.GuardStatus riskGuard = riskControlService.getStatus(xianyuAccountId);
+            if (riskGuard.state() == RiskControlService.GuardState.CIRCUIT_OPEN) {
+                return "WebSocket连接暂缓：账号处于平台风控冷却中，剩余"
+                        + riskGuard.remainingSeconds() + "秒";
+            }
             // 查询Cookie信息
             com.xianyu2.mapper.XianyuCookieMapper cookieMapper =
                     applicationContext.getBean(com.xianyu2.mapper.XianyuCookieMapper.class);
@@ -475,6 +480,18 @@ public class WebSocketController {
             log.error("清除验证等待状态失败", e);
             return ResultObject.failed("清除验证等待状态失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 人工确认平台限制已解除后，强制取消账号风控冷却。
+     */
+    @PostMapping("/risk-guard/clear")
+    public ResultObject<String> clearRiskGuard(@RequestBody ClearRiskGuardReqDTO reqDTO) {
+        if (reqDTO == null || reqDTO.getXianyuAccountId() == null) {
+            return ResultObject.validateFailed("账号ID不能为空");
+        }
+        riskControlService.forceClearCircuit(reqDTO.getXianyuAccountId());
+        return ResultObject.success("平台风控冷却已手动解除");
     }
 
     /**
@@ -944,6 +961,11 @@ public class WebSocketController {
      */
     @Data
     public static class CaptchaStatusReqDTO {
+        private Long xianyuAccountId;
+    }
+
+    @Data
+    public static class ClearRiskGuardReqDTO {
         private Long xianyuAccountId;
     }
 

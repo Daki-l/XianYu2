@@ -2,7 +2,7 @@
 import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { showConfirm } from '@/utils/confirm'
 import { toast } from '@/utils/toast'
-import { getConnectionStatus, startConnection, stopConnection } from '@/api/websocket'
+import { clearRiskGuard, getConnectionStatus, startConnection, stopConnection } from '@/api/websocket'
 import type { RiskGuardStatus } from '@/api/websocket'
 import { queryOperationLogs, type OperationLog } from '@/api/operation-log'
 import { showSuccess, showError, showInfo } from '@/utils'
@@ -146,6 +146,21 @@ const handleStopConnection = async () => {
 const handleRefresh = async () => {
   await Promise.all([loadConnectionStatus(), loadOperationLogs()])
   showInfo('状态已刷新')
+}
+
+const handleClearRiskGuard = async () => {
+  if (!props.accountId) return
+  try {
+    await showConfirm('这会立即恢复平台请求。仅在确认平台限制已解除时使用。', '解除风控冷却')
+    const response = await clearRiskGuard(props.accountId)
+    if (response.code !== 0 && response.code !== 200) {
+      throw new Error(response.msg || '解除风控冷却失败')
+    }
+    showSuccess('平台风控冷却已解除')
+    await Promise.all([loadConnectionStatus(), loadOperationLogs()])
+  } catch (error: any) {
+    if (error !== 'cancel' && error !== 'close') showError(error.message || '解除风控冷却失败')
+  }
 }
 
 const handleManualUpdateCookieSuccess = async () => {
@@ -364,6 +379,13 @@ onBeforeUnmount(() => {
                 原因：{{ connectionStatus.riskGuard.reason }}
               </span>
             </div>
+            <button
+              v-if="connectionStatus.riskGuard?.state === 'CIRCUIT_OPEN'"
+              class="btn btn--ghost btn--small"
+              @click="handleClearRiskGuard"
+            >
+              <IconRefresh /><span>强制解除</span>
+            </button>
           </div>
         </div>
 

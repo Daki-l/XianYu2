@@ -38,6 +38,7 @@ build/
 *.db
 *.db-journal
 /logs/
+/.playwright-browsers/
 /.env
 /deploy/nginx/certs/
 /nul

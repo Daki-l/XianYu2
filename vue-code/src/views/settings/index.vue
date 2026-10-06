@@ -161,6 +161,11 @@ const emailConfigExpanded = ref(true)
 const wsDisconnectNotifyEnabled = ref(false)
 const cookieExpireNotifyEnabled = ref(false)
 
+// 平台风控配置
+const RISK_GUARD_COOLDOWN_MINUTES_KEY = 'platform_risk_cooldown_minutes'
+const riskGuardCooldownMinutes = ref(30)
+const riskGuardSaving = ref(false)
+
 // AI 状态
 const aiStatus = ref({
   enabled: false,
@@ -210,6 +215,7 @@ const menuItems = [
   { key: 'menu', label: '菜单管理', icon: markRaw(IconTooling) },
   { key: 'ai', label: 'AI 服务配置', icon: markRaw(IconRobot) },
   { key: 'prompt', label: 'AI客服配置', icon: markRaw(IconChat) },
+  { key: 'risk', label: '平台风控', icon: markRaw(IconTooling) },
   { key: 'email', label: '邮箱通知', icon: markRaw(IconMail) },
   { key: 'backup', label: '备份与恢复', icon: markRaw(IconBackup) },
   { key: 'about', label: '关于', icon: markRaw(IconInfo) }
@@ -261,7 +267,44 @@ onMounted(async () => {
   await loadAIStatus()
   // 加载邮箱通知配置
   await loadEmailConfig()
+  // 加载平台风控配置
+  await loadRiskGuardConfig()
 })
+
+async function loadRiskGuardConfig() {
+  try {
+    const response = await getSetting({ settingKey: RISK_GUARD_COOLDOWN_MINUTES_KEY })
+    const value = Number(response.data?.settingValue)
+    if (response.code === 200 && Number.isInteger(value) && value >= 1 && value <= 1440) {
+      riskGuardCooldownMinutes.value = value
+    }
+  } catch (error) {
+    console.error('加载平台风控配置失败:', error)
+  }
+}
+
+async function handleSaveRiskGuardConfig() {
+  const minutes = Number(riskGuardCooldownMinutes.value)
+  if (!Number.isInteger(minutes) || minutes < 1 || minutes > 1440) {
+    toast.warning('冷却时长应为 1 至 1440 分钟的整数')
+    return
+  }
+  riskGuardSaving.value = true
+  try {
+    const response = await saveSetting({
+      settingKey: RISK_GUARD_COOLDOWN_MINUTES_KEY,
+      settingValue: String(minutes),
+      settingDesc: '平台风控固定冷却时长（分钟，1至1440）'
+    })
+    if (response.code !== 200) throw new Error(response.msg || '保存平台风控配置失败')
+    toast.success('平台风控冷却时长已保存，下一次触发立即生效')
+  } catch (error: any) {
+    console.error('保存平台风控配置失败:', error)
+    toast.error(error.message || '保存平台风控配置失败')
+  } finally {
+    riskGuardSaving.value = false
+  }
+}
 
 async function loadAIConfig() {
   try {
@@ -1665,6 +1708,32 @@ async function saveMenuLayout() {
             </tbody>
           </table>
           <p v-if="!emailConfigured" class="settings__hint" style="color:#e6a23c;margin-top:8px;">请先配置邮箱后再开启通知</p>
+        </div>
+      </div>
+
+      <div v-if="activeMenu === 'risk'" class="settings__panel">
+        <div class="settings__panel-title">平台风控</div>
+        <p class="settings__desc">命中平台繁忙或风控提示后，该账号的项目内平台操作会暂停固定时长。冷却到期后再次命中，将开始同样时长的新一轮冷却。</p>
+        <div class="settings__section">
+          <div class="settings__section-title">冷却时长</div>
+          <div class="settings__field">
+            <label class="settings__label">分钟</label>
+            <input
+              v-model.number="riskGuardCooldownMinutes"
+              type="number"
+              min="1"
+              max="1440"
+              step="1"
+              class="settings__input"
+              :disabled="riskGuardSaving"
+            />
+            <p class="settings__hint">范围 1 至 1440 分钟。连接管理页可对单个账号手动强制解除当前冷却。</p>
+          </div>
+          <div class="settings__actions">
+            <button class="settings__btn settings__btn--primary" :disabled="riskGuardSaving" @click="handleSaveRiskGuardConfig">
+              {{ riskGuardSaving ? '保存中...' : '保存' }}
+            </button>
+          </div>
         </div>
       </div>
 

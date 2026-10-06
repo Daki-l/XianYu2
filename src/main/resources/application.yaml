@@ -22,6 +22,7 @@ app:
     max-message-age-seconds: ${AUTO_REPLY_MAX_MESSAGE_AGE_SECONDS:120}
   risk-guard:
     state-file: ${RISK_GUARD_STATE_FILE:data/platform-risk-guard.json}
+    cooldown-minutes: ${RISK_GUARD_COOLDOWN_MINUTES:30}
   security:
     allowed-origins: ${ALLOWED_ORIGINS:http://localhost:5173,http://localhost:12400}
     trust-proxy: ${TRUST_PROXY:false}
