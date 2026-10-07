@@ -18,8 +18,16 @@ docker compose version >/dev/null 2>&1 || {
   exit 1
 }
 
+host_uid="$(id -u)"
+host_gid="$(id -g)"
 test_root="$(mktemp -d)"
 cleanup() {
+  # The test deliberately assigns this directory to the unprivileged app user.
+  # Restore CI-runner ownership so the trap can always remove its temporary data.
+  docker run --rm --user root --entrypoint /bin/sh \
+    -v "$test_root:/cleanup" "$image_ref" \
+    -ec "chown -R ${host_uid}:${host_gid} /cleanup && chmod -R u+rwX /cleanup" \
+    >/dev/null 2>&1 || true
   rm -rf "$test_root"
 }
 trap cleanup EXIT
