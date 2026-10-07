@@ -941,7 +941,10 @@ main() {
   fi
 
   exec 9>"$UPDATE_WORK_DIR/agent.lock"
-  flock -n 9 || exit 0
+  if ! flock -n 9; then
+    echo 'Another update agent invocation still holds the update lock.' >&2
+    exit 0
+  fi
   local recovery_exit=0
   recover_unfinished_task || recovery_exit=$?
   if (( recovery_exit != 0 )); then
