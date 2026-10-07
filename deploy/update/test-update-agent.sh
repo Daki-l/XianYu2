@@ -663,6 +663,8 @@ test_systemd_start_limit_is_explicit() {
     || fail 'Update agent unit does not set StartLimitIntervalSec'
   grep -Fx 'StartLimitBurst=4' "$service_file" >/dev/null \
     || fail 'Update agent unit does not set StartLimitBurst'
+  grep -Fx 'Environment=HOME=/var/lib/xianyu2/update/private/cosign' "$service_file" >/dev/null \
+    || fail 'Update agent unit does not provide a writable private HOME for Cosign metadata'
   grep -Fx 'WantedBy=multi-user.target' "$service_file" >/dev/null \
     || fail 'Update agent service is not enabled for boot recovery'
 }

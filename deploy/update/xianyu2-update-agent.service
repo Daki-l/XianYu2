@@ -18,6 +18,9 @@ TimeoutStopSec=30s
 Nice=10
 NoNewPrivileges=true
 PrivateTmp=true
+# Cosign caches trusted TUF/Rekor metadata below $HOME. Keep that cache in the
+# root-only agent work area because ProtectHome and ProtectSystem stay enabled.
+Environment=HOME=/var/lib/xianyu2/update/private/cosign
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/xianyu2 /etc/xianyu2
