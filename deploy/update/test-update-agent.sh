@@ -650,34 +650,42 @@ test_installer_enables_boot_recovery_service() {
     || fail 'Update agent installer does not start the recovery service'
 }
 
-test_hash_mismatch_preserves_runtime_jar
-test_unknown_state_falls_back_to_image_update
-test_image_update_clears_runtime_jar
-test_downgrade_is_rejected
-test_image_pull_failure_preserves_runtime_jar
-test_candidate_image_pull_failure_keeps_release_inputs
-test_health_failure_requires_manual_recovery
-test_backup_failure_stops_before_compose
-test_signature_failure_stops_before_runtime_change
-test_untrusted_redirect_is_rejected
-test_download_failure_is_terminal
-test_manual_release_requires_host_confirmation
-test_initial_install_applies_verified_manual_release
-test_newer_agent_is_required_for_manual_application
-test_newer_agent_blocks_regular_update_with_manual_status
-test_unknown_manifest_schema_requires_manual_recovery
-test_missing_host_package_asset_is_rejected
-test_lock_keeps_request_unclaimed
-test_symbolic_link_request_is_rejected
-test_hard_link_request_is_rejected
-test_world_writable_request_is_rejected
-test_world_readable_request_is_rejected
-test_claimed_task_is_archived_as_failed_after_restart
-test_recent_heartbeat_is_not_failed_after_restart
-test_total_timeout_wins_over_a_recent_heartbeat_after_restart
-test_install_release_requires_explicit_tag
-test_initial_install_request_uses_application_identity
-test_total_timeout_requires_systemd_headroom
-test_systemd_start_limit_is_explicit
-test_installer_enables_boot_recovery_service
+run_case() {
+  printf 'Running update agent test: %s\n' "$1"
+  "$1"
+}
+
+for test_case in \
+  test_hash_mismatch_preserves_runtime_jar \
+  test_unknown_state_falls_back_to_image_update \
+  test_image_update_clears_runtime_jar \
+  test_downgrade_is_rejected \
+  test_image_pull_failure_preserves_runtime_jar \
+  test_candidate_image_pull_failure_keeps_release_inputs \
+  test_health_failure_requires_manual_recovery \
+  test_backup_failure_stops_before_compose \
+  test_signature_failure_stops_before_runtime_change \
+  test_untrusted_redirect_is_rejected \
+  test_download_failure_is_terminal \
+  test_manual_release_requires_host_confirmation \
+  test_initial_install_applies_verified_manual_release \
+  test_newer_agent_is_required_for_manual_application \
+  test_newer_agent_blocks_regular_update_with_manual_status \
+  test_unknown_manifest_schema_requires_manual_recovery \
+  test_missing_host_package_asset_is_rejected \
+  test_lock_keeps_request_unclaimed \
+  test_symbolic_link_request_is_rejected \
+  test_hard_link_request_is_rejected \
+  test_world_writable_request_is_rejected \
+  test_world_readable_request_is_rejected \
+  test_claimed_task_is_archived_as_failed_after_restart \
+  test_recent_heartbeat_is_not_failed_after_restart \
+  test_total_timeout_wins_over_a_recent_heartbeat_after_restart \
+  test_install_release_requires_explicit_tag \
+  test_initial_install_request_uses_application_identity \
+  test_total_timeout_requires_systemd_headroom \
+  test_systemd_start_limit_is_explicit \
+  test_installer_enables_boot_recovery_service; do
+  run_case "$test_case"
+done
 printf 'Update agent tests passed.\n'
