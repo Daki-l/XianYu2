@@ -106,7 +106,9 @@ if [[ "$url" == https://api.github.com/repos/Daki-l/XianYu2/releases/assets/* &&
   asset_id="${url##*/}"
   printf 'HTTP/1.1 302 Found\r\nLocation: https://%s/assets/%s\r\n\r\n' \
     "${AGENT_TEST_EFFECTIVE_HOST:-release-assets.githubusercontent.com}" "$asset_id" > "$headers"
-  [[ "$write_status" == true ]] && printf '302'
+  if [[ "$write_status" == true ]]; then
+    printf '302'
+  fi
   exit 0
 fi
 
@@ -122,7 +124,9 @@ case "$url" in
   */assets/4) cp "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar.bundle" "$destination" ;;
   *) echo "Unexpected curl URL: $url" >&2; exit 1 ;;
 esac
-[[ "$write_status" == true ]] && printf '200'
+if [[ "$write_status" == true ]]; then
+  printf '200'
+fi
 EOF
   chmod +x "$mock_bin/cosign" "$mock_bin/docker" "$mock_bin/curl"
 }
