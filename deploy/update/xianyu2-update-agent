@@ -721,6 +721,7 @@ restore_release_env_snapshot() {
 }
 
 process_task() {
+  local manual_approved="${1:-false}"
   start_task_timeout
   local requested_tag release_json manifest manifest_bundle jar jar_bundle
   requested_tag="$(jq -r '.releaseTag // empty' "$task_file")"
@@ -781,7 +782,7 @@ process_task() {
   release_asset_id "$release_json" "$host_package_name" >/dev/null
   release_asset_id "$release_json" "${host_package_name}.bundle" >/dev/null
 
-  if [[ "$update_type" == 'host-package-manual-required' && "$manual_apply" != 'true' && "$initial_install" != 'true' ]]; then
+  if [[ "$update_type" == 'host-package-manual-required' && "$manual_approved" != 'true' && "$initial_install" != 'true' ]]; then
     [[ "$(jq -r '.manual.instructions // .manualInstructions // empty' "$manifest")" != '' ]] || {
       echo 'Manual-required release is missing manual instructions.' >&2
       return 1
@@ -940,11 +941,11 @@ main() {
   fi
   if [[ "$manual_apply" == 'true' ]]; then
     create_manual_task "$2"
-    process_task
+    process_task true
     exit 0
   fi
   claim_request || exit 0
-  process_task
+  process_task false
 }
 
 main "$@"
