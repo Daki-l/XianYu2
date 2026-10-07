@@ -26,7 +26,6 @@ task_version=''
 downloaded_bytes=0
 total_bytes=0
 initial_install=false
-manual_apply=false
 download_dir=''
 backup_path=''
 backup_sha256=''
@@ -918,19 +917,25 @@ create_manual_task() {
 }
 
 main() {
+  local manual_tag=''
   load_config
   preflight
-  if [[ "${1:-}" == '--check' ]]; then
-    exit 0
-  fi
-  if [[ "${1:-}" == '--initial-install' ]]; then
-    initial_install=true
-  elif [[ "${1:-}" == '--apply-manual-release' && $# -eq 2 ]]; then
-    manual_apply=true
-  elif [[ $# -gt 0 ]]; then
-    echo "Unsupported argument: $1" >&2
-    exit 64
-  fi
+  case "${1:-}" in
+    '') ;;
+    --check) exit 0 ;;
+    --initial-install) initial_install=true ;;
+    --apply-manual-release)
+      [[ $# -eq 2 ]] || {
+        echo 'Usage: xianyu2-update-agent --apply-manual-release vX.Y.Z' >&2
+        exit 64
+      }
+      manual_tag="$2"
+      ;;
+    *)
+      echo "Unsupported argument: $1" >&2
+      exit 64
+      ;;
+  esac
 
   exec 9>"$UPDATE_WORK_DIR/agent.lock"
   flock -n 9 || exit 0
@@ -939,9 +944,9 @@ main() {
   if (( recovery_exit != 0 )); then
     exit "$recovery_exit"
   fi
-  if [[ "$manual_apply" == 'true' ]]; then
-    echo "Applying manually confirmed release $2." >&2
-    create_manual_task "$2"
+  if [[ -n "$manual_tag" ]]; then
+    echo "Applying manually confirmed release $manual_tag." >&2
+    create_manual_task "$manual_tag"
     process_task true
     exit 0
   fi
