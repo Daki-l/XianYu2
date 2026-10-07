@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.10",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 1,
+  "manual": {
+    "reason": "更新代理的 systemd 单元需要为 Cosign 配置 root 私有的可写缓存目录，同时保持主目录和系统文件系统保护。",
+    "instructions": "按 Release 的验签和校验说明安装 host package，执行 install-update-agent.sh 后确认 xianyu2-update-agent.service 的 HOME 指向 /var/lib/xianyu2/update/private/cosign；然后由 root 执行 --apply-manual-release。"
+  }
+}
