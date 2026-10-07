@@ -540,7 +540,7 @@ github_api_get() {
   timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
   curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 15 --max-time "$timeout_seconds" \
     --header 'Accept: application/vnd.github+json' --header 'User-Agent: XianYu2-update-agent' \
-    "$url" -o "$destination"
+    -o "$destination" "$url"
 }
 
 verify_release_commit() {
