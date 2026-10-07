@@ -226,6 +226,8 @@ start_task_timeout() {
   task_started_at="${task_started_at:-$(timestamp)}"
   task_deadline_epoch=$(( $(date +%s) + TASK_TOTAL_TIMEOUT_SECONDS ))
   (
+    # 不让后台 sleep 继承任务锁；代理退出后必须立即允许后续请求重新竞争锁。
+    exec 9>&-
     sleep "$TASK_TOTAL_TIMEOUT_SECONDS"
     kill -TERM "$$" 2>/dev/null || true
   ) &
@@ -300,6 +302,8 @@ start_heartbeat() {
   fi
   stop_heartbeat
   (
+    # 心跳进程只写状态，不能延长 flock 的生命周期。
+    exec 9>&-
     while sleep "$HEARTBEAT_INTERVAL_SECONDS"; do
       AGENT_HEARTBEAT_WRITER=true write_status "$status" "$progress" "$message" "$detail" || true
     done
