@@ -1,4 +1,4 @@
-name: Build and Deploy XianYu2
+name: Build and Verify XianYu2
 
 on:
   push:
@@ -24,7 +24,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # PR 校验与 main 生产部署必须隔离，避免 PR 新任务取消正在进行的生产发布。
+  # PR 与 main 的构建校验必须隔离，避免不同分支的任务互相取消。
   group: xianyu2-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
@@ -195,7 +195,7 @@ jobs:
   smoke-test:
     needs: build
     # 必须 always()：不带状态函数时，依赖闭包中被跳过的 job（如 playwright-base）
-    # 会把本 job 级联跳过，导致未改动 Playwright 的常规提交静默跳过部署。
+    # 会把本 job 级联跳过，导致未改动 Playwright 的常规提交跳过镜像烟测。
     if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -224,48 +224,3 @@ jobs:
           IMAGE: ${{ needs.build.outputs.image }}
           DIGEST: ${{ needs.build.outputs.digest }}
         run: bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
-
-  deploy:
-    needs:
-      - build
-      - smoke-test
-    if: >-
-      always() && github.ref == 'refs/heads/main' &&
-      needs.build.result == 'success' && needs.smoke-test.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Join Tailscale network
-        uses: tailscale/github-action@v4
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          ping: ${{ secrets.SERVER_HOST }}
-
-      - name: Configure SSH
-        env:
-          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICjIQVjmk8M0j5fyR6OwycJy3lyVPhbNWTuy/tACpybh
-        run: |
-          install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
-          printf '%s %s\n' "$SERVER_HOST" "$SSH_HOST_KEY" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
-
-      - name: Deploy image digest
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SERVER_HOST: ${{ secrets.SERVER_HOST }}
-          SERVER_USER: ${{ secrets.SERVER_USER }}
-          IMAGE: ${{ needs.build.outputs.image }}
-          DIGEST: ${{ needs.build.outputs.digest }}
-        run: |
-          printf '%s\n' "$GHCR_TOKEN" | ssh \
-            -i "$HOME/.ssh/id_ed25519" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            "$SERVER_USER@$SERVER_HOST" \
-            "deploy $IMAGE $DIGEST"
