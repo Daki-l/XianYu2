@@ -1,9 +1,6 @@
 name: Update star history chart
 
 on:
-  schedule:
-    # 每日 03:00 UTC（北京时间 11:00）更新星标趋势图。
-    - cron: "0 3 * * *"
   workflow_dispatch: {}
 
 permissions:

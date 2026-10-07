@@ -26,6 +26,37 @@ update_app_image() {
   fi
 }
 
+restore_app_image() {
+  local image_ref="$1"
+  if [[ -n "$image_ref" ]]; then
+    update_app_image "$image_ref"
+  else
+    sed -i '/^APP_IMAGE=/d' "$deploy_path/.env"
+  fi
+}
+
+pull_app_image() {
+  local max_attempts=3
+  local retry_delay_seconds=15
+  local attempt delay_seconds
+
+  for attempt in $(seq 1 "$max_attempts"); do
+    if compose pull app; then
+      return 0
+    fi
+
+    if [[ "$attempt" -lt "$max_attempts" ]]; then
+      delay_seconds=$((retry_delay_seconds * attempt))
+      echo "Image pull failed (attempt ${attempt}/${max_attempts}); retrying in ${delay_seconds}s." >&2
+      sleep "$delay_seconds"
+    fi
+  done
+
+  echo 'DEPLOYMENT_FAILURE_CATEGORY=IMAGE_PULL_FAILURE' >&2
+  echo "Unable to pull the application image after ${max_attempts} attempts." >&2
+  return 1
+}
+
 wait_for_healthy() {
   local state='unknown'
   for _ in $(seq 1 60); do
@@ -138,7 +169,12 @@ install -d -m 700 "$DOCKER_CONFIG"
 printf '%s\n' "$ghcr_token" | docker login ghcr.io -u Daki-l --password-stdin >/dev/null
 unset ghcr_token
 
-compose pull app
+if ! pull_app_image; then
+  echo 'Image pull failed before the application was recreated; restoring the previous image setting.' >&2
+  restore_app_image "$previous_image"
+  exit 1
+fi
+
 if compose up -d --no-build --force-recreate app && wait_for_healthy; then
   actual_image="$(docker inspect "$container_name" --format '{{.Config.Image}}')"
   [[ "$actual_image" == "$image_ref" ]] || {
@@ -153,7 +189,7 @@ report_deployment_diagnostics
 
 if [[ -n "$previous_image" ]]; then
   echo 'Deployment failed; restoring the previous image.' >&2
-  update_app_image "$previous_image"
+  restore_app_image "$previous_image"
   if compose up -d --no-build --force-recreate app && wait_for_healthy; then
     rollback_image="$(docker inspect "$container_name" --format '{{.Config.Image}}' 2>/dev/null || true)"
     printf 'ROLLBACK_RESULT=success\nROLLBACK_IMAGE=%s\n' "${rollback_image:-unavailable}" >&2
