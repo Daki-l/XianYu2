@@ -191,6 +191,7 @@ write_installed_state() {
 }
 
 run_agent() {
+  printf 'Running update agent command: %s\n' "${*:-<request>}"
   AGENT_TEST_FIXTURE="$fixture_dir" AGENT_TEST_DOCKER_LOG="$docker_log" \
     AGENT_TEST_COSIGN_IDENTITY="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${target_tag}" \
     PATH="$mock_bin:$PATH" XIANYU2_UPDATE_AGENT_CONFIG="$config_file" bash "$agent" "$@"

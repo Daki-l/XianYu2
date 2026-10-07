@@ -940,6 +940,7 @@ main() {
     exit "$recovery_exit"
   fi
   if [[ "$manual_apply" == 'true' ]]; then
+    echo "Applying manually confirmed release $2." >&2
     create_manual_task "$2"
     process_task true
     exit 0
