@@ -657,16 +657,18 @@ public class XianyuWebSocketClient extends WebSocketClient {
     /**
      * 完成等待中的响应Future
      */
-    public void completePendingResponse(String mid, int code) {
+    public boolean completePendingResponse(String mid, int code) {
         CompletableFuture<Integer> future = pendingResponses.remove(mid);
         if (future != null && !future.isDone()) {
             future.complete(code);
             log.debug("【账号{}】完成pendingResponse: mid={}, code={}", accountId, mid, code);
+            return true;
         }
+        return false;
     }
 
-    public void completePendingResponse(String mid, int code, Map<String, Object> response) {
-        completePendingResponse(mid, code);
+    public boolean completePendingResponse(String mid, int code, Map<String, Object> response) {
+        boolean pendingMessageResponse = completePendingResponse(mid, code);
         CompletableFuture<Map<String, Object>> future = pendingPayloadResponses.remove(mid);
         if (future != null && !future.isDone()) {
             if (code == 200) {
@@ -675,6 +677,7 @@ public class XianyuWebSocketClient extends WebSocketClient {
                 future.completeExceptionally(new IllegalStateException("平台历史消息查询失败: " + code));
             }
         }
+        return pendingMessageResponse;
     }
 
     /**

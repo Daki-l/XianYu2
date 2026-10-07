@@ -3,7 +3,7 @@ import { ref, watch, computed, onMounted, onBeforeUnmount } from 'vue'
 import { showConfirm } from '@/utils/confirm'
 import { toast } from '@/utils/toast'
 import { clearRiskGuard, getConnectionStatus, startConnection, stopConnection } from '@/api/websocket'
-import type { RiskGuardStatus } from '@/api/websocket'
+import type { RiskGuardStatus, WebSocketHealthSnapshot } from '@/api/websocket'
 import { queryOperationLogs, type OperationLog } from '@/api/operation-log'
 import { showSuccess, showError, showInfo } from '@/utils'
 import CredentialModal from './CredentialModal.vue'
@@ -32,6 +32,7 @@ interface ConnectionStatus {
   tokenExpireTime?: number
   autoDeliveryOn?: boolean
   autoReplyOn?: boolean
+  health?: WebSocketHealthSnapshot
   riskGuard?: RiskGuardStatus
   deferredPlatformActions?: number
 }
@@ -241,7 +242,61 @@ const getOperationStatusColor = (status: number) => {
 }
 
 const canSyncGoods = computed(() => connectionStatus.value?.cookieStatus === 1)
-const canAutoReply = computed(() => connectionStatus.value?.connected === true)
+const transportConnected = computed(() => connectionStatus.value?.connected === true)
+const realtimeSyncState = computed(() => connectionStatus.value?.health?.realtimeSyncState
+  || (transportConnected.value ? 'UNVERIFIED' : 'OFFLINE'))
+const sendState = computed(() => connectionStatus.value?.health?.sendState
+  || (transportConnected.value ? 'UNVERIFIED' : 'UNAVAILABLE'))
+
+const healthCardClass = (state: string) => {
+  if (state === 'ACTIVE' || state === 'CONFIRMED') return 'status-card--success'
+  if (state === 'UNVERIFIED' || state === 'STALE') return 'status-card--warning'
+  return 'status-card--danger'
+}
+
+const realtimeCardClass = computed(() => healthCardClass(realtimeSyncState.value))
+const sendCardClass = computed(() => healthCardClass(sendState.value))
+
+const formatHealthTime = (timestamp?: number) => {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).replace(/\//g, '-')
+}
+
+const realtimeDescription = computed(() => {
+  const syncedAt = formatHealthTime(connectionStatus.value?.health?.lastRealtimeSyncAt)
+  if (realtimeSyncState.value === 'ACTIVE') return syncedAt ? `最近同步 ${syncedAt}` : '实时同步已确认'
+  if (realtimeSyncState.value === 'STALE') return syncedAt ? `最近同步较早 ${syncedAt}` : '最近同步较早'
+  if (realtimeSyncState.value === 'UNVERIFIED') return '本次连接尚未收到实时同步'
+  return '连接未建立'
+})
+
+const sendFailureDescription = (reason?: string) => {
+  const text: Record<string, string> = {
+    PLATFORM_500: '平台返回 500',
+    PLATFORM_401: '平台返回 401',
+    PLATFORM_CONFIRMATION_FAILED: '平台未确认发送成功',
+    RISK_GUARD: '平台风控冷却中',
+    CLIENT_MISSING: '发送客户端不存在',
+    TRANSPORT_OFFLINE: '连接未建立',
+    CLIENT_EXCEPTION: '发送客户端异常'
+  }
+  return reason ? (text[reason] || '发送失败') : '发送失败'
+}
+
+const sendDescription = computed(() => {
+  const health = connectionStatus.value?.health
+  const successAt = formatHealthTime(health?.lastSendSuccessAt)
+  const failureAt = formatHealthTime(health?.lastSendFailureAt)
+  if (sendState.value === 'CONFIRMED') return successAt ? `最近发送成功 ${successAt}` : '平台已确认发送成功'
+  if (sendState.value === 'FAILED') {
+    const reason = sendFailureDescription(health?.lastSendFailureReason)
+    return failureAt ? `${reason} ${failureAt}` : reason
+  }
+  if (sendState.value === 'UNVERIFIED') return '本次连接尚无平台确认的发送结果'
+  return '连接未建立，无法发送'
+})
 const riskGuardNormal = computed(() => (!connectionStatus.value?.riskGuard
   || connectionStatus.value.riskGuard.state === 'NORMAL')
   && !connectionStatus.value?.deferredPlatformActions)
@@ -324,13 +379,13 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div class="status-card" :class="canAutoReply ? 'status-card--success' : 'status-card--danger'">
+          <div class="status-card" :class="transportConnected ? 'status-card--success' : 'status-card--danger'">
             <div class="status-card__icon">
-              <component :is="canAutoReply ? IconCheck : IconAlert" />
+              <component :is="transportConnected ? IconCheck : IconAlert" />
             </div>
             <div class="status-card__content">
-              <span class="status-card__title">Websocket 状态</span>
-              <span class="status-card__desc">{{ canAutoReply ? '已连接' : '未连接' }}</span>
+              <span class="status-card__title">连接通道</span>
+              <span class="status-card__desc">{{ transportConnected ? '心跳正常' : '未连接' }}</span>
             </div>
             <button
               v-if="connectionStatus.connected === true"
@@ -348,22 +403,42 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div class="status-card" :class="connectionStatus.autoDeliveryOn ? 'status-card--success' : 'status-card--danger'">
+          <div class="status-card" :class="realtimeCardClass">
+            <div class="status-card__icon">
+              <component :is="realtimeSyncState === 'ACTIVE' ? IconCheck : IconAlert" />
+            </div>
+            <div class="status-card__content">
+              <span class="status-card__title">实时消息</span>
+              <span class="status-card__desc">{{ realtimeDescription }}</span>
+            </div>
+          </div>
+
+          <div class="status-card" :class="sendCardClass">
+            <div class="status-card__icon">
+              <component :is="sendState === 'CONFIRMED' ? IconCheck : IconAlert" />
+            </div>
+            <div class="status-card__content">
+              <span class="status-card__title">消息发送</span>
+              <span class="status-card__desc">{{ sendDescription }}</span>
+            </div>
+          </div>
+
+          <div class="status-card status-card--neutral">
             <div class="status-card__icon">
               <component :is="connectionStatus.autoDeliveryOn ? IconCheck : IconAlert" />
             </div>
             <div class="status-card__content">
-              <span class="status-card__title">自动发货</span>
-              <span class="status-card__desc">{{ connectionStatus.autoDeliveryOn ? (connectionStatus.connected ? 'WS 发货' : '凭证发货') : '未开启' }}</span>
+              <span class="status-card__title">自动发货配置</span>
+              <span class="status-card__desc">{{ connectionStatus.autoDeliveryOn ? '已启用' : '未启用' }}</span>
             </div>
           </div>
 
-          <div class="status-card" :class="connectionStatus.autoReplyOn ? 'status-card--success' : 'status-card--danger'">
+          <div class="status-card status-card--neutral">
             <div class="status-card__icon">
               <component :is="connectionStatus.autoReplyOn ? IconCheck : IconAlert" />
             </div>
             <div class="status-card__content">
-              <span class="status-card__title">自动回复</span>
+              <span class="status-card__title">自动回复配置</span>
               <span class="status-card__desc">{{ connectionStatus.autoReplyOn ? '已开启' : '未开启' }}</span>
             </div>
           </div>
@@ -562,6 +637,21 @@ onBeforeUnmount(() => {
   background: rgba(255, 59, 48, 0.12);
 }
 
+.status-card--warning {
+  border-color: rgba(255, 159, 10, 0.35);
+  background: rgba(255, 159, 10, 0.08);
+}
+
+.status-card--warning:hover {
+  border-color: rgba(255, 159, 10, 0.45);
+  background: rgba(255, 159, 10, 0.12);
+}
+
+.status-card--neutral {
+  border-color: rgba(0, 122, 255, 0.22);
+  background: rgba(0, 122, 255, 0.05);
+}
+
 .status-card__icon {
   width: 40px;
   height: 40px;
@@ -580,6 +670,16 @@ onBeforeUnmount(() => {
 .status-card--danger .status-card__icon {
   background: rgba(255, 59, 48, 0.2);
   color: var(--c-danger);
+}
+
+.status-card--warning .status-card__icon {
+  background: rgba(255, 159, 10, 0.2);
+  color: var(--c-warning);
+}
+
+.status-card--neutral .status-card__icon {
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--c-primary);
 }
 
 .status-card__icon svg { width: 20px; height: 20px; }
@@ -615,6 +715,8 @@ onBeforeUnmount(() => {
 
 .status-card--success .status-card__title { color: var(--c-success); }
 .status-card--danger .status-card__title { color: var(--c-danger); }
+.status-card--warning .status-card__title { color: var(--c-warning); }
+.status-card--neutral .status-card__title { color: var(--c-primary); }
 
 .status-card .btn {
   flex-shrink: 0;

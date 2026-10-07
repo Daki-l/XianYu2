@@ -8,6 +8,7 @@ import com.xianyu2.service.AccountService;
 import com.xianyu2.service.OfflineRecoveryService;
 import com.xianyu2.service.OperationLogService;
 import com.xianyu2.service.RiskControlService;
+import com.xianyu2.service.WebSocketHealthTracker;
 
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.service.WebSocketTokenService;
@@ -77,6 +78,9 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Autowired
     private RiskControlService riskControlService;
+
+    @Autowired
+    private WebSocketHealthTracker healthTracker;
 
     // 存储WebSocket客户端
     private final Map<Long, XianyuWebSocketClient> webSocketClients = new ConcurrentHashMap<>();
@@ -382,6 +386,7 @@ public class WebSocketServiceImpl implements WebSocketService {
             
             if (connected) {
                 webSocketClients.put(accountId, client);
+                healthTracker.recordConnectionEstablished(accountId);
                 
                 // 执行WebSocket初始化流程（参考Python的init方法）
                 log.info("开始WebSocket初始化流程: accountId={}", accountId);
@@ -990,37 +995,46 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean sendMessageWithResult(Long accountId, String cid, String toId, String text) {
+        long attemptStartedAt = System.currentTimeMillis();
         try {
             log.info("发送消息(等待结果): accountId={}, cid={}, toId={}, text={}", accountId, cid, toId, text);
             if (!isPlatformActionAllowed(accountId, "发送消息")) {
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "RISK_GUARD");
                 return false;
             }
             
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
                 log.error("WebSocket客户端不存在: accountId={}", accountId);
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "CLIENT_MISSING");
                 return false;
             }
             
             if (!isConnected(accountId)) {
                 log.error("WebSocket未连接: accountId={}", accountId);
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "TRANSPORT_OFFLINE");
                 return false;
             }
             
-            return client.sendMessageWithResult(cid, toId, text);
+            boolean success = client.sendMessageWithResult(cid, toId, text);
+            healthTracker.recordSendResult(accountId, attemptStartedAt, success,
+                    "PLATFORM_CONFIRMATION_FAILED");
+            return success;
             
         } catch (Exception e) {
             log.error("发送消息失败: accountId={}, cid={}, toId={}", accountId, cid, toId, e);
+            healthTracker.recordSendResult(accountId, attemptStartedAt, false, "CLIENT_EXCEPTION");
             return false;
         }
     }
 
     @Override
-    public void completePendingResponse(Long accountId, String mid, int code, Map<String, Object> response) {
+    public boolean completePendingResponse(Long accountId, String mid, int code, Map<String, Object> response) {
         XianyuWebSocketClient client = webSocketClients.get(accountId);
         if (client != null) {
-            client.completePendingResponse(mid, code, response);
+            return client.completePendingResponse(mid, code, response);
         }
+        return false;
     }
 
     @Override
@@ -1063,28 +1077,36 @@ public class WebSocketServiceImpl implements WebSocketService {
 
     @Override
     public boolean sendImageMessageWithResult(Long accountId, String cid, String toId, String imageUrl, int width, int height) {
+        long attemptStartedAt = System.currentTimeMillis();
         try {
             log.info("发送图片消息(等待结果): accountId={}, cid={}, toId={}, url={}, size={}x{}",
                     accountId, cid, toId, imageUrl, width, height);
             if (!isPlatformActionAllowed(accountId, "发送图片消息")) {
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "RISK_GUARD");
                 return false;
             }
 
             XianyuWebSocketClient client = webSocketClients.get(accountId);
             if (client == null) {
                 log.error("WebSocket客户端不存在: accountId={}", accountId);
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "CLIENT_MISSING");
                 return false;
             }
 
             if (!isConnected(accountId)) {
                 log.error("WebSocket未连接: accountId={}", accountId);
+                healthTracker.recordSendResult(accountId, attemptStartedAt, false, "TRANSPORT_OFFLINE");
                 return false;
             }
 
-            return client.sendImageMessageWithResult(cid, toId, imageUrl, width, height);
+            boolean success = client.sendImageMessageWithResult(cid, toId, imageUrl, width, height);
+            healthTracker.recordSendResult(accountId, attemptStartedAt, success,
+                    "PLATFORM_CONFIRMATION_FAILED");
+            return success;
 
         } catch (Exception e) {
             log.error("发送图片消息失败: accountId={}, cid={}, toId={}", accountId, cid, toId, e);
+            healthTracker.recordSendResult(accountId, attemptStartedAt, false, "CLIENT_EXCEPTION");
             return false;
         }
     }

@@ -2,7 +2,7 @@
 import { ref, watch, computed, onMounted, onUnmounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getConnectionStatus, startConnection, stopConnection } from '@/api/websocket'
-import type { RiskGuardStatus } from '@/api/websocket'
+import type { RiskGuardStatus, WebSocketHealthSnapshot } from '@/api/websocket'
 import { queryOperationLogs, type OperationLog } from '@/api/operation-log'
 import { getAccountList } from '@/api/account'
 import { showSuccess, showError, showInfo } from '@/utils'
@@ -38,6 +38,7 @@ interface ConnectionStatus {
   tokenExpireTime?: number
   autoDeliveryOn?: boolean
   autoReplyOn?: boolean
+  health?: WebSocketHealthSnapshot
   riskGuard?: RiskGuardStatus
   deferredPlatformActions?: number
 }
@@ -260,7 +261,58 @@ const getOperationStatusColor = (status: number) => {
 }
 
 const canSyncGoods = computed(() => connectionStatus.value?.cookieStatus === 1)
-const canAutoReply = computed(() => connectionStatus.value?.connected === true)
+const transportConnected = computed(() => connectionStatus.value?.connected === true)
+const realtimeSyncState = computed(() => connectionStatus.value?.health?.realtimeSyncState
+  || (transportConnected.value ? 'UNVERIFIED' : 'OFFLINE'))
+const sendState = computed(() => connectionStatus.value?.health?.sendState
+  || (transportConnected.value ? 'UNVERIFIED' : 'UNAVAILABLE'))
+
+const healthCardClass = (state: string) => {
+  if (state === 'ACTIVE' || state === 'CONFIRMED') return 'cap-card--ok'
+  if (state === 'UNVERIFIED' || state === 'STALE') return 'cap-card--warn'
+  return 'cap-card--err'
+}
+
+const formatHealthTime = (timestamp?: number) => {
+  if (!timestamp) return ''
+  return new Date(timestamp).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+  }).replace(/\//g, '-')
+}
+
+const realtimeDescription = computed(() => {
+  const syncedAt = formatHealthTime(connectionStatus.value?.health?.lastRealtimeSyncAt)
+  if (realtimeSyncState.value === 'ACTIVE') return syncedAt ? `最近同步 ${syncedAt}` : '实时同步已确认'
+  if (realtimeSyncState.value === 'STALE') return syncedAt ? `最近同步较早 ${syncedAt}` : '最近同步较早'
+  if (realtimeSyncState.value === 'UNVERIFIED') return '本次连接尚未收到实时同步'
+  return '连接未建立'
+})
+
+const sendFailureDescription = (reason?: string) => {
+  const text: Record<string, string> = {
+    PLATFORM_500: '平台返回 500',
+    PLATFORM_401: '平台返回 401',
+    PLATFORM_CONFIRMATION_FAILED: '平台未确认发送成功',
+    RISK_GUARD: '平台风控冷却中',
+    CLIENT_MISSING: '发送客户端不存在',
+    TRANSPORT_OFFLINE: '连接未建立',
+    CLIENT_EXCEPTION: '发送客户端异常'
+  }
+  return reason ? (text[reason] || '发送失败') : '发送失败'
+}
+
+const sendDescription = computed(() => {
+  const health = connectionStatus.value?.health
+  const successAt = formatHealthTime(health?.lastSendSuccessAt)
+  const failureAt = formatHealthTime(health?.lastSendFailureAt)
+  if (sendState.value === 'CONFIRMED') return successAt ? `最近发送成功 ${successAt}` : '平台已确认发送成功'
+  if (sendState.value === 'FAILED') {
+    const reason = sendFailureDescription(health?.lastSendFailureReason)
+    return failureAt ? `${reason} ${failureAt}` : reason
+  }
+  if (sendState.value === 'UNVERIFIED') return '本次连接尚无平台确认的发送结果'
+  return '连接未建立，无法发送'
+})
 const riskGuardNormal = computed(() => (!connectionStatus.value?.riskGuard
   || connectionStatus.value.riskGuard.state === 'NORMAL')
   && !connectionStatus.value?.deferredPlatformActions)
@@ -347,11 +399,11 @@ onBeforeUnmount(() => {
               <IconKey /><span>{{ showCredentialSection ? '收起' : '凭证' }}</span>
             </button>
           </div>
-          <div class="cap-card" :class="canAutoReply ? 'cap-card--ok' : 'cap-card--err'">
+          <div class="cap-card" :class="transportConnected ? 'cap-card--ok' : 'cap-card--err'">
             <div class="cap-card__dot"></div>
             <div class="cap-card__text">
-              <span class="cap-card__label">Websocket 状态</span>
-              <span class="cap-card__desc">{{ canAutoReply ? '已连接' : '未连接' }}</span>
+              <span class="cap-card__label">连接通道</span>
+              <span class="cap-card__desc">{{ transportConnected ? '心跳正常' : '未连接' }}</span>
             </div>
             <button
               v-if="connectionStatus.connected === true"
@@ -368,17 +420,31 @@ onBeforeUnmount(() => {
               <IconPlay /><span>连接</span>
             </button>
           </div>
-          <div class="cap-card" :class="connectionStatus.autoDeliveryOn ? 'cap-card--ok' : 'cap-card--err'">
+          <div class="cap-card" :class="healthCardClass(realtimeSyncState)">
             <div class="cap-card__dot"></div>
             <div class="cap-card__text">
-              <span class="cap-card__label">自动发货</span>
-              <span class="cap-card__desc">{{ connectionStatus.autoDeliveryOn ? (connectionStatus.connected ? 'WS 发货' : '凭证发货') : '未开启' }}</span>
+              <span class="cap-card__label">实时消息</span>
+              <span class="cap-card__desc">{{ realtimeDescription }}</span>
             </div>
           </div>
-          <div class="cap-card" :class="connectionStatus.autoReplyOn ? 'cap-card--ok' : 'cap-card--err'">
+          <div class="cap-card" :class="healthCardClass(sendState)">
             <div class="cap-card__dot"></div>
             <div class="cap-card__text">
-              <span class="cap-card__label">自动回复</span>
+              <span class="cap-card__label">消息发送</span>
+              <span class="cap-card__desc">{{ sendDescription }}</span>
+            </div>
+          </div>
+          <div class="cap-card cap-card--neutral">
+            <div class="cap-card__dot"></div>
+            <div class="cap-card__text">
+              <span class="cap-card__label">自动发货配置</span>
+              <span class="cap-card__desc">{{ connectionStatus.autoDeliveryOn ? '已启用' : '未启用' }}</span>
+            </div>
+          </div>
+          <div class="cap-card cap-card--neutral">
+            <div class="cap-card__dot"></div>
+            <div class="cap-card__text">
+              <span class="cap-card__label">自动回复配置</span>
               <span class="cap-card__desc">{{ connectionStatus.autoReplyOn ? '已开启' : '未开启' }}</span>
             </div>
           </div>
@@ -641,6 +707,16 @@ onBeforeUnmount(() => {
   border-color: rgba(255, 59, 48, 0.2);
 }
 
+.cap-card--warn {
+  background: rgba(255, 159, 10, 0.07);
+  border-color: rgba(255, 159, 10, 0.25);
+}
+
+.cap-card--neutral {
+  background: rgba(0, 122, 255, 0.05);
+  border-color: rgba(0, 122, 255, 0.18);
+}
+
 .cap-card__dot {
   width: 10px;
   height: 10px;
@@ -650,6 +726,8 @@ onBeforeUnmount(() => {
 
 .cap-card--ok .cap-card__dot { background: #30D158; }
 .cap-card--err .cap-card__dot { background: #FF453A; }
+.cap-card--warn .cap-card__dot { background: #FF9F0A; }
+.cap-card--neutral .cap-card__dot { background: #007AFF; }
 
 .cap-card__text {
   flex: 1;
@@ -667,6 +745,8 @@ onBeforeUnmount(() => {
 
 .cap-card--ok .cap-card__label { color: #30D158; }
 .cap-card--err .cap-card__label { color: #FF453A; }
+.cap-card--warn .cap-card__label { color: #FF9F0A; }
+.cap-card--neutral .cap-card__label { color: #007AFF; }
 
 .cap-card__desc {
   font-size: 12px;

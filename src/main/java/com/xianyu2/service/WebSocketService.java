@@ -102,7 +102,10 @@ public interface WebSocketService {
     /**
      * 按请求mid完成等待中的平台响应
      */
-    void completePendingResponse(Long accountId, String mid, int code, Map<String, Object> response);
+    /**
+     * @return true when the response completed a pending message send request
+     */
+    boolean completePendingResponse(Long accountId, String mid, int code, Map<String, Object> response);
 
     /**
      * 分页读取指定会话的历史消息

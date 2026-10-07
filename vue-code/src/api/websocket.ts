@@ -9,6 +9,20 @@ export interface RiskGuardStatus {
   operation?: string;
 }
 
+export type RealtimeSyncState = 'ACTIVE' | 'UNVERIFIED' | 'STALE' | 'OFFLINE';
+export type SendState = 'CONFIRMED' | 'UNVERIFIED' | 'FAILED' | 'UNAVAILABLE';
+
+export interface WebSocketHealthSnapshot {
+  transportConnected: boolean;
+  realtimeSyncState: RealtimeSyncState;
+  sendState: SendState;
+  connectionEstablishedAt?: number;
+  lastRealtimeSyncAt?: number;
+  lastSendSuccessAt?: number;
+  lastSendFailureAt?: number;
+  lastSendFailureReason?: string;
+}
+
 // WebSocket连接状态
 export interface WebSocketStatus {
   xianyuAccountId: number;
@@ -20,6 +34,7 @@ export interface WebSocketStatus {
   tokenExpireTime?: number;   // Token过期时间戳（毫秒）
   autoDeliveryOn?: boolean;   // 是否有商品开启了自动发货
   autoReplyOn?: boolean;      // 是否有商品开启了自动回复
+  health?: WebSocketHealthSnapshot; // Runtime transport evidence
   riskGuard?: RiskGuardStatus; // 平台写操作护栏
   deferredPlatformActions?: number; // 等待平台恢复的任务数
 }

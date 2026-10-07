@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { useConnectionManager } from './useConnectionManager'
 import ConnectionCard from './components/ConnectionCard.vue'
 import ConnectionDetail from './components/ConnectionDetail.vue'
+import type { RiskGuardStatus, WebSocketHealthSnapshot } from '@/api/websocket'
 
 import IconLink from '@/components/icons/IconLink.vue'
 
@@ -43,13 +44,19 @@ const connectionMap = computed(() => {
     status?: string
     cookieStatus?: number
     tokenExpireTime?: number
+    health?: WebSocketHealthSnapshot
+    riskGuard?: RiskGuardStatus
+    deferredPlatformActions?: number
   }>()
   for (const [accountId, status] of allConnectionStatuses.value) {
     map.set(accountId, {
       connected: status.connected,
       status: status.status,
       cookieStatus: status.cookieStatus,
-      tokenExpireTime: status.tokenExpireTime
+      tokenExpireTime: status.tokenExpireTime,
+      health: status.health,
+      riskGuard: status.riskGuard,
+      deferredPlatformActions: status.deferredPlatformActions
     })
   }
   return map

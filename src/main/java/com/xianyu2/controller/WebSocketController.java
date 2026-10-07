@@ -10,6 +10,7 @@ import com.xianyu2.mapper.XianyuGoodsOrderMapper;
 import com.xianyu2.service.CaptchaSolveService;
 import com.xianyu2.service.CookieRefreshService;
 import com.xianyu2.service.RiskControlService;
+import com.xianyu2.service.WebSocketHealthTracker;
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.utils.XianyuSignUtils;
 import lombok.Data;
@@ -56,6 +57,9 @@ public class WebSocketController {
 
     @Autowired
     private RiskControlService riskControlService;
+
+    @Autowired
+    private WebSocketHealthTracker healthTracker;
 
     @Autowired
     private MerchantTaskMapper merchantTaskMapper;
@@ -358,6 +362,7 @@ public class WebSocketController {
             respDTO.setXianyuAccountId(reqDTO.getXianyuAccountId());
             respDTO.setConnected(connected);
             respDTO.setStatus(connected ? "已连接" : "未连接");
+            respDTO.setHealth(healthTracker.snapshot(reqDTO.getXianyuAccountId(), connected));
             respDTO.setRiskGuard(riskControlService.getStatus(reqDTO.getXianyuAccountId()));
             respDTO.setDeferredPlatformActions(
                     merchantTaskMapper.countPendingPlatformActions(reqDTO.getXianyuAccountId())
@@ -1031,6 +1036,7 @@ public class WebSocketController {
         private Long tokenExpireTime;  // Token过期时间戳（毫秒）
         private Boolean autoDeliveryOn; // 是否有商品开启了自动发货
         private Boolean autoReplyOn;     // 是否有商品开启了自动回复
+        private WebSocketHealthTracker.HealthSnapshot health; // Runtime transport evidence
         private RiskControlService.GuardStatus riskGuard; // 平台写操作护栏状态
         private Long deferredPlatformActions; // 等待平台恢复的任务数
     }

@@ -1,6 +1,7 @@
 package com.xianyu2.websocket;
 
 import com.xianyu2.service.WebSocketService;
+import com.xianyu2.service.WebSocketHealthTracker;
 import com.xianyu2.websocket.handler.*;
 import com.xianyu2.service.RiskControlService;
 import com.xianyu2.service.TokenRefreshService;
@@ -41,6 +42,9 @@ public class WebSocketMessageRouter {
 
     @Autowired
     private RiskControlService riskControlService;
+
+    @Autowired
+    private WebSocketHealthTracker healthTracker;
     
     /**
      * 延迟初始化处理器
@@ -104,7 +108,7 @@ public class WebSocketMessageRouter {
             ensureInitialized();
 
             // 平台响应可能保留请求lwp，必须优先按mid唤醒等待任务，避免历史消息请求误判超时。
-            completePendingResponse(accountId, messageData);
+            boolean pendingMessageResponse = completePendingResponse(accountId, messageData);
             
             // 获取lwp路径
             Object lwpObj = messageData.get("lwp");
@@ -113,11 +117,15 @@ public class WebSocketMessageRouter {
             if (lwp == null) {
                 // 没有lwp字段，可能是响应消息
                 log.debug("【账号{}】收到无lwp字段的消息，可能是响应消息", accountId);
-                handleResponseMessage(accountId, messageData);
+                handleResponseMessage(accountId, messageData, pendingMessageResponse);
                 return;
             }
 
-            handlePlatformResponseStatus(accountId, messageData);
+            if ("/s/sync".equals(lwp)) {
+                healthTracker.recordRealtimeSync(Long.parseLong(accountId));
+            }
+
+            handlePlatformResponseStatus(accountId, messageData, pendingMessageResponse);
             
             // 查找对应的处理器
             AbstractLwpHandler handler = handlerMap.get(lwp);
@@ -140,7 +148,8 @@ public class WebSocketMessageRouter {
     /**
      * 处理响应消息（没有lwp字段，但有code字段）
      */
-    private void handleResponseMessage(String accountId, Map<String, Object> messageData) {
+    private void handleResponseMessage(String accountId, Map<String, Object> messageData,
+                                       boolean pendingMessageResponse) {
         Object code = messageData.get("code");
         if (code == null) {
             handleUnknownMessage(accountId, messageData);
@@ -172,7 +181,7 @@ public class WebSocketMessageRouter {
                 
                 log.debug("【账号{}】收到成功响应(200)", accountId);
             } else if (codeValue == 401 || codeValue == 500) {
-                handlePlatformResponseStatus(accountId, messageData);
+                handlePlatformResponseStatus(accountId, messageData, pendingMessageResponse);
             } else {
                 log.warn("【账号{}】未知响应码: {}", accountId, code);
             }
@@ -181,38 +190,46 @@ public class WebSocketMessageRouter {
         }
     }
 
-    private void handlePlatformResponseStatus(String accountId, Map<String, Object> messageData) {
+    private void handlePlatformResponseStatus(String accountId, Map<String, Object> messageData,
+                                              boolean pendingMessageResponse) {
         int codeValue = parseResponseCode(messageData.get("code"));
         if (codeValue == 401) {
+            if (pendingMessageResponse) {
+                healthTracker.recordPlatformResponseFailure(Long.parseLong(accountId), codeValue);
+            }
             // 401 只能说明当前 WebSocket Token 不可用，不能据此断言 Cookie 已过期。
             refreshWebSocketToken(accountId);
         } else if (codeValue == 500) {
+            if (pendingMessageResponse) {
+                healthTracker.recordPlatformResponseFailure(Long.parseLong(accountId), codeValue);
+            }
             // 500 常见于平台临时拒绝或繁忙。保留 Cookie 状态，并在命中明确风控文案时开启冷却。
             recordRiskSignal(accountId, messageData);
             log.warn("【账号{}】WebSocket服务端错误(500)，Cookie状态保持不变", accountId);
         }
     }
 
-    private void completePendingResponse(String accountId, Map<String, Object> messageData) {
+    private boolean completePendingResponse(String accountId, Map<String, Object> messageData) {
         Object code = messageData.get("code");
         Object headersObj = messageData.get("headers");
         if (!(headersObj instanceof Map<?, ?> headers)) {
-            return;
+            return false;
         }
         Object mid = headers.get("mid");
         if (mid == null) {
-            return;
+            return false;
         }
         // 历史消息响应可能不返回code，按业务响应体识别成功结果，避免已返回的数据被误判为超时。
         int codeValue = code == null && isHistoryResponse(messageData) ? 200 : parseResponseCode(code);
         if (codeValue < 0) {
-            return;
+            return false;
         }
         try {
-            webSocketService.completePendingResponse(Long.parseLong(accountId), mid.toString(),
+            return webSocketService.completePendingResponse(Long.parseLong(accountId), mid.toString(),
                     codeValue, messageData);
         } catch (Exception e) {
             log.debug("完成pendingResponse失败: {}", e.getMessage());
+            return false;
         }
     }
 

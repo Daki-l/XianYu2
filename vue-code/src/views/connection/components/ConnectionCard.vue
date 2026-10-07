@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import type { Account } from '@/types'
-import type { RiskGuardStatus } from '@/api/websocket'
+import type { RiskGuardStatus, WebSocketHealthSnapshot } from '@/api/websocket'
 
 import IconClock from '@/components/icons/IconClock.vue'
 import IconArrowRight from '@/components/icons/IconArrowRight.vue'
@@ -14,6 +14,7 @@ interface ConnectionInfo {
   status?: string
   cookieStatus?: number
   tokenExpireTime?: number
+  health?: WebSocketHealthSnapshot
   riskGuard?: RiskGuardStatus
   deferredPlatformActions?: number
 }
@@ -69,17 +70,29 @@ const getCookieText = (status?: number) => {
 
 const getWsColor = (info?: ConnectionInfo) => {
   if (!info) return 'var(--c-text-3)'
-  return info.connected ? 'var(--c-success)' : 'var(--c-danger)'
+  if (!info.connected || info.health?.sendState === 'FAILED') return 'var(--c-danger)'
+  if (info.health?.realtimeSyncState === 'UNVERIFIED' || info.health?.realtimeSyncState === 'STALE') {
+    return 'var(--c-warning)'
+  }
+  return 'var(--c-success)'
 }
 
 const getWsBg = (info?: ConnectionInfo) => {
   if (!info) return 'rgba(120,120,128,.12)'
-  return info.connected ? 'rgba(48,209,88,.2)' : 'rgba(255,69,58,.15)'
+  if (!info.connected || info.health?.sendState === 'FAILED') return 'rgba(255,69,58,.15)'
+  if (info.health?.realtimeSyncState === 'UNVERIFIED' || info.health?.realtimeSyncState === 'STALE') {
+    return 'rgba(255,159,10,.18)'
+  }
+  return 'rgba(48,209,88,.2)'
 }
 
 const getWsText = (info?: ConnectionInfo) => {
   if (!info) return '未检测'
-  return info.connected ? '已连接' : '未连接'
+  if (!info.connected) return '未连接'
+  if (info.health?.sendState === 'FAILED') return '发送异常'
+  if (info.health?.realtimeSyncState === 'UNVERIFIED') return '待验证'
+  if (info.health?.realtimeSyncState === 'STALE') return '同步较早'
+  return '已连接'
 }
 
 const getRiskText = (info?: ConnectionInfo) => {
