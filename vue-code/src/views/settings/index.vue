@@ -163,8 +163,11 @@ const cookieExpireNotifyEnabled = ref(false)
 
 // 平台风控配置
 const RISK_GUARD_COOLDOWN_MINUTES_KEY = 'platform_risk_cooldown_minutes'
+const PLATFORM_CONVERSATION_PROFILE_FETCH_ENABLED_KEY = 'platform_conversation_profile_fetch_enabled'
 const riskGuardCooldownMinutes = ref(30)
 const riskGuardSaving = ref(false)
+const conversationProfileFetchEnabled = ref(false)
+const conversationProfileFetchSaving = ref(false)
 
 // AI 状态
 const aiStatus = ref({
@@ -273,13 +276,41 @@ onMounted(async () => {
 
 async function loadRiskGuardConfig() {
   try {
-    const response = await getSetting({ settingKey: RISK_GUARD_COOLDOWN_MINUTES_KEY })
-    const value = Number(response.data?.settingValue)
-    if (response.code === 200 && Number.isInteger(value) && value >= 1 && value <= 1440) {
+    const [cooldownResponse, profileFetchResponse] = await Promise.all([
+      getSetting({ settingKey: RISK_GUARD_COOLDOWN_MINUTES_KEY }),
+      getSetting({ settingKey: PLATFORM_CONVERSATION_PROFILE_FETCH_ENABLED_KEY })
+    ])
+    const value = Number(cooldownResponse.data?.settingValue)
+    if (cooldownResponse.code === 200 && Number.isInteger(value) && value >= 1 && value <= 1440) {
       riskGuardCooldownMinutes.value = value
     }
+    const fetchEnabledValue = profileFetchResponse.code === 200 && profileFetchResponse.data
+      ? profileFetchResponse.data.settingValue
+      : ''
+    conversationProfileFetchEnabled.value = fetchEnabledValue === '1' || fetchEnabledValue === 'true'
   } catch (error) {
     console.error('加载平台风控配置失败:', error)
+  }
+}
+
+async function handleSaveConversationProfileFetch() {
+  conversationProfileFetchSaving.value = true
+  try {
+    const response = await saveSetting({
+      settingKey: PLATFORM_CONVERSATION_PROFILE_FETCH_ENABLED_KEY,
+      settingValue: conversationProfileFetchEnabled.value ? 'true' : 'false',
+      settingDesc: '是否允许向闲鱼查询会话买家资料（true启用，false关闭）'
+    })
+    if (response.code !== 200) throw new Error(response.msg || '保存买家资料查询设置失败')
+    toast.success(conversationProfileFetchEnabled.value
+      ? '已启用闲鱼买家资料查询'
+      : '已关闭闲鱼买家资料查询')
+  } catch (error: any) {
+    conversationProfileFetchEnabled.value = !conversationProfileFetchEnabled.value
+    console.error('保存买家资料查询设置失败:', error)
+    toast.error(error.message || '保存买家资料查询设置失败')
+  } finally {
+    conversationProfileFetchSaving.value = false
   }
 }
 
@@ -1715,6 +1746,25 @@ async function saveMenuLayout() {
         <div class="settings__panel-title">平台风控</div>
         <p class="settings__desc">命中平台繁忙或风控提示后，该账号的项目内平台操作会暂停固定时长。冷却到期后再次命中，将开始同样时长的新一轮冷却。</p>
         <div class="settings__section">
+          <div class="settings__section-title">会话买家资料</div>
+          <div class="settings__capability-switch">
+            <div>
+              <strong>向闲鱼查询买家资料</strong>
+              <span>关闭后仅显示消息和本地已保存的买家资料，不会请求闲鱼的买家头像、昵称接口。</span>
+            </div>
+            <label class="settings__switch">
+              <input
+                v-model="conversationProfileFetchEnabled"
+                type="checkbox"
+                :disabled="conversationProfileFetchSaving"
+                @change="handleSaveConversationProfileFetch"
+              />
+              <span class="settings__switch-track"></span>
+              <span class="settings__switch-thumb"></span>
+            </label>
+          </div>
+        </div>
+        <div class="settings__section">
           <div class="settings__section-title">冷却时长</div>
           <div class="settings__field">
             <label class="settings__label">分钟</label>
@@ -1961,7 +2011,7 @@ async function saveMenuLayout() {
         <!-- 许可证与使用限制 -->
         <div class="settings__section">
           <div class="settings__section-title">许可证与使用限制</div>
-          <p class="settings__desc">本项目采用 PolyForm Noncommercial License 1.0.0，仅授权个人学习、技术研究、实验和其他非商业用途。</p>
+          <p class="settings__desc">本项目采用 MIT License；第三方组件继续适用其各自的许可证。</p>
 
           <div class="settings__warning-box">
             <div class="settings__warning-icon">⚠️</div>

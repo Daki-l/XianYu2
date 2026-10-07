@@ -1,0 +1,26 @@
+[Unit]
+Description=XianYu2 release update agent
+After=docker.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=4
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/local/lib/xianyu2/xianyu2-update-agent
+Restart=on-failure
+RestartSec=15s
+# 必须大于 update-agent.conf 中的 TASK_TOTAL_TIMEOUT_SECONDS。
+TimeoutStartSec=45min
+TimeoutStopSec=30s
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/xianyu2 /etc/xianyu2
+
+[Install]
+WantedBy=multi-user.target

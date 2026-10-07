@@ -9,7 +9,7 @@
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-2f6f5e)](https://spring.io/projects/spring-boot)
 [![Vue 3](https://img.shields.io/badge/Vue-3-2f6f5e)](https://vuejs.org/)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%2B-2f6f5e)](https://www.mysql.com/)
-[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-2f6f5e)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Automate virtual product ordering, delivery, support, and reviews as much as possible. Routine orders run unattended while exceptions are handled in one place.**
 
@@ -17,7 +17,7 @@ XianYu2 is a virtual product operations system for Xianyu in multi-tenant enviro
 
 The system does more than send a block of text after receiving an order. It connects **order discovery, idempotent queuing, inventory reservation, dual-channel delivery, failure retries, and manual review** into a complete recoverable workflow. Fixed content and card-key delivery modes are strictly mutually exclusive, while accounts, products, messages, orders, inventory, tasks, and AI knowledge bases are isolated by tenant. Core task workflows rely only on MySQL, without requiring Redis or a message queue, balancing deployment cost with future extensibility.
 
-Current version: 2.0.7 · [View changelog](CHANGELOG.md)
+Next planned release: 2.0.8 · [View changelog](CHANGELOG.md)
 
 [Benefits for Merchants](#benefits-for-merchants) · [Technical Highlights](#technical-highlights) · [Problems Solved](#problems-solved) · [Feature Scope](#feature-scope) · [Feature Entry Points & Setup Order](#feature-entry-points--setup-order) · [Business Workflow](#business-workflow) · [Technical Baseline](#technical-baseline) · [Container Image Deployment](#container-image-deployment) · [Quick Start](#quick-start) · [Configuration](#configuration) · [Development Build](#development-build) · [Build & Verification](#build--verification) · [Directory Responsibilities](#directory-responsibilities) · [Routine Operations](#routine-operations) · [Usage Boundaries](#usage-boundaries) · [License & Disclaimer](#license--disclaimer) · [Star History](#star-history)
 
@@ -181,38 +181,142 @@ flowchart LR
 
 ## Container Image Deployment
 
-Every official Release automatically publishes a `linux/amd64` image to GitHub Container Registry. Fixed versions are suitable for production deployment, while `latest` is intended for trying the latest official release.
+Each official `vX.Y.Z` Release publishes a `linux/amd64` image, the same JAR used by that image, a signed host package, `SHA256SUMS.txt`, `release-manifest.json`, and Cosign signatures. Production installs use the immutable digest declared by the manifest. This project neither publishes nor uses `latest`.
+
+Pushes to `main` and pull requests run migration checks, tests, and container smoke tests only. They never connect to or deploy a server. A GitHub Release is created only after the JAR build, image digest smoke test, and signature checks succeed.
+
+### Linux Production Installation and Online Updates
+
+Production uses two environment files: `.env` in the project directory contains secrets such as database credentials and JWT keys, while `/etc/xianyu2/release.env` contains only the immutable image digest managed by the update agent. Do not place a GitHub token, image digest, or database secrets in the other file. During the first-release rehearsal, keep `UPDATE_ENABLED=false` in the root-owned, container-unwritable `.env`; only a host administrator changes it to `true` and recreates the app after the controlled instance passes verification. This gate only allows or rejects HTTP update requests and never bypasses agent signature or health checks.
+
+The host requires Docker Engine, Docker Compose v2, `curl`, `jq`, `flock`, `sha256sum`, GNU `timeout`, and Cosign. Choose a pinned Cosign version only from the [official Sigstore instructions](https://docs.sigstore.dev/cosign/system_config/installation/), verify that version against its official SHA-256, then run `cosign version`. The update agent never installs or upgrades host dependencies automatically.
 
 ```bash
-docker pull ghcr.io/daki-l/xianyu2:v2.0.7
-docker pull ghcr.io/daki-l/xianyu2:latest
+# Pin every first installation to one formal tag. Do not clone the default branch or execute scripts from it.
+set -Eeuo pipefail
+RELEASE_TAG=v2.0.8
+RELEASE_API="https://api.github.com/repos/Daki-l/XianYu2/releases/tags/${RELEASE_TAG}"
+COSIGN_IDENTITY="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}"
+COSIGN_ISSUER='https://token.actions.githubusercontent.com'
+WORK_DIR="$(mktemp -d)"
+cd "$WORK_DIR"
+curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+  -H 'Accept: application/vnd.github+json' "$RELEASE_API" -o release.json
+
+# Accept only the exact formal tag and exactly one manifest asset pair.
+jq -e --arg tag "$RELEASE_TAG" '
+  .tag_name == $tag and .draft == false and .prerelease == false
+  and ([.assets[] | select(.name == "release-manifest.json" and (.id | type) == "number")] | length == 1)
+  and ([.assets[] | select(.name == "release-manifest.json.bundle" and (.id | type) == "number")] | length == 1)
+' release.json >/dev/null
+
+release_asset_id() {
+  jq -er --arg name "$1" '
+    [.assets[] | select(.name == $name and (.id | type) == "number") | .id]
+    | if length == 1 then .[0] else error("asset count") end
+  ' release.json
+}
+
+download_asset() {
+  local name="$1" asset_id effective_url
+  asset_id="$(release_asset_id "$name")"
+  effective_url="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 \
+    -H 'Accept: application/octet-stream' -H 'User-Agent: XianYu2-bootstrap' \
+    --output "$name" --write-out '%{url_effective}' \
+    "https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}")"
+  case "$effective_url" in
+    https://api.github.com/*|https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
+    *) rm -f "$name"; return 1 ;;
+  esac
+}
+download_asset release-manifest.json
+download_asset release-manifest.json.bundle
+cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+  --certificate-oidc-issuer "$COSIGN_ISSUER" --bundle release-manifest.json.bundle release-manifest.json
+
+MANIFEST_COMMIT="$(jq -er --arg tag "$RELEASE_TAG" '
+  if .schemaVersion == 1 and .releaseTag == $tag and (.commitSha | test("^[0-9a-f]{40}$"))
+  then .commitSha else error("invalid signed manifest") end
+' release-manifest.json)"
+TAG_REF="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+  -H 'Accept: application/vnd.github+json' \
+  "https://api.github.com/repos/Daki-l/XianYu2/git/ref/tags/${RELEASE_TAG}")"
+if [[ "$(jq -r '.object.type' <<<"$TAG_REF")" == tag ]]; then
+  TAG_OBJECT="$(jq -er '.object.sha' <<<"$TAG_REF")"
+  TAG_REF="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+    -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/Daki-l/XianYu2/git/tags/${TAG_OBJECT}")"
+fi
+[[ "$(jq -r '.object.type' <<<"$TAG_REF")" == commit ]]
+[[ "$(jq -r '.object.sha' <<<"$TAG_REF")" == "$MANIFEST_COMMIT" ]]
+
+HOST_PACKAGE="$(jq -er '.hostPackage.name | select(test("^[A-Za-z0-9._-]+\\.tar\\.gz$"))' release-manifest.json)"
+HOST_PACKAGE_SHA="$(jq -er '.hostPackage.sha256 | select(test("^[0-9a-f]{64}$"))' release-manifest.json)"
+HOST_PACKAGE_SIZE="$(jq -er '.hostPackage.size | select(type == "number" and . > 0 and floor == .)' release-manifest.json)"
+download_asset "$HOST_PACKAGE"
+download_asset "${HOST_PACKAGE}.bundle"
+[[ "$(stat -c '%s' "$HOST_PACKAGE")" == "$HOST_PACKAGE_SIZE" ]]
+printf '%s  %s\n' "$HOST_PACKAGE_SHA" "$HOST_PACKAGE" | sha256sum --check -
+cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+  --certificate-oidc-issuer "$COSIGN_ISSUER" --bundle "${HOST_PACKAGE}.bundle" "$HOST_PACKAGE"
+
+# Extract only allowlisted regular files and directories. Reject links, path traversal, and extra files.
+PACKAGE_ROOT="xianyu2-host-package-v${RELEASE_TAG#v}"
+tar -tzf "$HOST_PACKAGE" | awk -v root="$PACKAGE_ROOT" '
+  index($0, root "/") != 1 { exit 1 }
+  { path = substr($0, length(root) + 2) }
+  path == "" { next }
+  path ~ /(^|\/)\.\.($|\/)/ || path ~ /^\// || path ~ /\/\// { exit 1 }
+  path == ".env.example" || path == "compose.yaml" || path == "deploy/" || path ~ /^deploy\/(nginx|server|update)(\/|$)/ { next }
+  { exit 1 }
+'
+tar -tvzf "$HOST_PACKAGE" | awk '$1 ~ /^[-d]/ { next } { exit 1 }'
+for required_path in .env.example compose.yaml deploy/update/agent-version deploy/update/xianyu2-update-agent deploy/update/xianyu2-update-agent.service deploy/update/xianyu2-update-agent.path deploy/update/update-agent.conf.example deploy/update/backup-mysql deploy/update/install-update-agent.sh deploy/update/install-release.sh; do
+  tar -tzf "$HOST_PACKAGE" | grep -Fx "${PACKAGE_ROOT}/${required_path}" >/dev/null
+done
+STAGE_DIR="$(mktemp -d)"
+tar --extract --gzip --file "$HOST_PACKAGE" --directory "$STAGE_DIR" --strip-components=1 \
+  --no-same-owner --no-same-permissions --numeric-owner
+sudo install -d -m 0755 /opt/xianyu2
+sudo cp -R --no-preserve=mode,ownership "$STAGE_DIR/." /opt/xianyu2/
+sudo chown -R root:root /opt/xianyu2
+cd /opt/xianyu2
+
+# Prepare .env. This file holds secrets and is never rewritten by the update agent.
+sudo cp .env.example .env
+sudo chmod 0600 .env
+sudoedit .env
+
+# Install the update agent from the verified host package.
+sudo bash deploy/update/install-update-agent.sh
+sudoedit /etc/xianyu2/update-agent.conf
+# Verify PROJECT_DIR, COMPOSE_FILE, ENV_FILE, directory paths, and the database backup hook.
+# The first run installs files and creates the config. Run it again after saving the config to validate dependencies and enable the systemd Path unit.
+sudo bash deploy/update/install-update-agent.sh
+
+# Install that formal Release.
+sudo bash deploy/update/install-release.sh "$RELEASE_TAG"
 ```
 
-Start a fixed version using the repository's Docker Compose configuration:
+The installer creates four directory classes: the application can write only `update/request`; it reads `update/status` and `runtime`; the agent-private `update/private` directory is never mounted into the container. A management administrator can request updates only after the controlled instance passes verification and a host administrator explicitly sets `UPDATE_ENABLED=true`. The host agent verifies the GitHub OIDC Cosign identity, JAR hash, image digest and provenance, and runtime fingerprint. Routine business releases replace only the JAR; Java, Playwright, or system dependency changes pull a new image. When installed state is missing or mismatched, the agent never overwrites the runtime JAR and safely switches to the Release image baseline instead. Existing instances back up before Flyway migrations, and an unsuccessful backup or health check stops the installation.
 
-Linux:
+When the UI says that manual action is required, the Release changed Compose, the update agent, systemd, permissions, or another host contract. If that Release manifest has a new `hostPackage`, download and install it only after the same Cosign identity, SHA-256, and bundle checks above; do not copy scripts from the default branch. Complete the host instructions in the Release Notes, then run as root:
 
 ```bash
-cp .env.example .env
-# Update the database password and strong JWT secret in .env
-export APP_IMAGE=ghcr.io/daki-l/xianyu2:v2.0.7
-docker compose pull app
-docker compose up -d --no-build
+sudo /usr/local/lib/xianyu2/xianyu2-update-agent --apply-manual-release vX.Y.Z
 ```
 
-Windows PowerShell:
+This repeats the same signature validation, backup, image pull, and health checks and cannot be initiated from the management UI. If Flyway has already migrated and the health check fails, the agent does not attempt a database rollback; recover manually from the status file, backup, and container logs.
 
-```powershell
-Copy-Item .env.example .env
-notepad .env
-$env:APP_IMAGE = 'ghcr.io/daki-l/xianyu2:v2.0.7'
-docker compose pull app
-docker compose up -d --no-build
+Production Compose commands must explicitly load both files:
+
+```bash
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml up -d
 ```
 
-The image still depends on the MySQL, JWT, and cross-origin settings in `.env`. Windows Docker Desktop must use Linux container mode. Pin a version tag in production to avoid unplanned changes from updates to `latest`.
+Windows Docker Desktop can use `compose.dev.yaml` for development validation. The systemd update agent is Linux-host-only.
 
-## Quick Start
+## Local Development Quick Start
 
 ### Requirements
 
@@ -221,20 +325,20 @@ The image still depends on the MySQL, JWT, and cross-origin settings in `.env`. 
 - At least 2 CPU cores and 2 GB of memory recommended for Linux production environments
 - Windows can use Docker Desktop for functional testing
 
-### Linux
+### Linux (development)
 
 ```bash
 chmod +x install.sh
-./install.sh
+./install.sh --development
 ```
 
-### Windows PowerShell
+### Windows PowerShell (development)
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-docker compose up -d --build
-docker compose ps
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml ps
 ```
 
 All three example secrets in `.env` must be changed before startup. `JWT_SECRET` must contain at least 32 random bytes, and database passwords must not be reused.
@@ -243,7 +347,9 @@ Open `http://localhost:12400` after startup.
 
 A fresh database opens the tenant account creation page on first access. When tenants already exist, a new tenant can still be registered from the login page. Password length is limited to 8–72 characters.
 
-### Public HTTPS
+### Public HTTPS (Release production)
+
+Complete the Release installation above first. Do not use `--build` or `compose.dev.yaml` on a production host.
 
 1. Save the certificates as:
 
@@ -262,7 +368,7 @@ TRUST_PROXY=true
 3. Start the proxy profile:
 
 ```bash
-docker compose --profile proxy up -d --build
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml --profile proxy up -d
 ```
 
 4. After pointing the domain to the server, open `https://shop.example.com`.
@@ -282,7 +388,8 @@ Copy `.env.example` to `.env`, then update it for the environment:
 | `JWT_SECRET` | Login token signing secret | At least 48 random bytes |
 | `ALLOWED_ORIGINS` | Frontend origins allowed to access the application | Complete HTTPS domain |
 | `TRUST_PROXY` | Whether proxy headers are trusted | Set to `true` only behind Nginx |
-| `UPDATE_RELEASE_API` | GitHub Releases API | Optional; set a valid Release URL to enable update checks |
+| `UPDATE_RELEASE_API` | Fixed GitHub Release API | Defaults to the official public endpoint; do not replace it with an arbitrary download URL |
+| `UPDATE_ENABLED` | Whether the management UI may start online updates | Defaults to `false` for the first release; only a host administrator enables it after verification |
 | `DB_POOL_MAX_SIZE` | Maximum database connections | Default `10` for a single instance |
 | `DB_POOL_MIN_IDLE` | Minimum idle connections | Default `2` |
 | `JAVA_OPTS` | JVM container memory policy | Default value is suitable for small instances |
@@ -378,24 +485,24 @@ compose.yaml             Application, MySQL, and Nginx orchestration
 
 ## Routine Operations
 
-View status and logs:
+View Release production status and logs:
 
 ```bash
-docker compose ps
-docker compose logs -f --tail=200 app
-docker compose logs -f --tail=200 mysql
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml ps
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml logs -f --tail=200 app
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml logs -f --tail=200 mysql
 ```
 
-After updating local code:
+After updating local development code:
 
 ```bash
-docker compose up -d --build
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
 Back up MySQL:
 
 ```bash
-docker compose exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
 ```
 
 Stop application writes and verify the backup file before restoring. Business data exports do not include sensitive configuration such as cookies, AI keys, or email passwords. Runtime environment variables and certificates must be preserved separately for disaster recovery.
@@ -409,13 +516,11 @@ Stop application writes and verify the backup file before restoring. Business da
 
 ## License & Disclaimer
 
-This project uses the [PolyForm Noncommercial License 1.0.0](LICENSE) and is licensed only for personal learning, technical research, experiments, and other noncommercial purposes.
-
-**All commercial use is prohibited**, including sales, paid deployment, hosting services, SaaS, managed operations, commercial lead generation, paid training, and direct or indirect profit through advertising, subscriptions, commissions, or value-added services.
+This project is open-sourced under the [MIT License](LICENSE).
 
 - Usage must comply with applicable laws and regulations, Xianyu's platform terms of service, and account usage rules.
 
-Downloading, copying, modifying, deploying, running, or distributing this project indicates acceptance of the [complete usage restrictions and disclaimer](DISCLAIMER.md).
+Read the [risk notice and disclaimer](DISCLAIMER.md) before use.
 
 ## ⭐ Star History
 

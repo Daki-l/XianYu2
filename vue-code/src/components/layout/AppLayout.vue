@@ -3,7 +3,7 @@ import { ref, shallowRef, onMounted, onUnmounted, computed, provide, markRaw, wa
 import { RouterView, useRoute } from 'vue-router'
 import NavMenu from './NavMenu.vue'
 import UpdateDialog from './UpdateDialog.vue'
-import { checkUpdate, getCurrentUser } from '@/api/system'
+import { checkUpdate, getCurrentUser, getVersion } from '@/api/system'
 import { hasPermission } from '@/utils/permission'
 
 // 导入所有页面图标
@@ -22,10 +22,11 @@ const route = useRoute()
 
 declare const __APP_VERSION__: string
 
-const currentVersion = ref(__APP_VERSION__ || '2.0.7')
+const currentVersion = ref(__APP_VERSION__ || '0.0.0-dev')
 const hasNewVersion = ref(false)
 const isAdmin = ref(false)
 const updateDialog = ref<InstanceType<typeof UpdateDialog> | null>(null)
+let recoveryTimer: number | undefined
 
 const loadVersion = async () => {
   try {
@@ -42,6 +43,17 @@ const loadVersion = async () => {
 const openUpdateDialog = () => {
   if (!isAdmin.value) return
   updateDialog.value?.open()
+}
+
+const recoverAfterRestart = async () => {
+  try {
+    const response = await getVersion()
+    if (response.data && response.data !== currentVersion.value) {
+      window.location.reload()
+    }
+  } catch {
+    // 服务重启时短暂不可访问，下一次探测继续尝试。
+  }
 }
 
 // 响应式设备类型
@@ -160,10 +172,14 @@ onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
   loadVersion()
+  recoveryTimer = window.setInterval(() => void recoverAfterRestart(), 10000)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', checkScreenSize)
+  if (recoveryTimer !== undefined) {
+    window.clearInterval(recoveryTimer)
+  }
 })
 </script>
 

@@ -9,7 +9,7 @@
 [![Spring Boot 3.5](https://img.shields.io/badge/Spring%20Boot-3.5-2f6f5e)](https://spring.io/projects/spring-boot)
 [![Vue 3](https://img.shields.io/badge/Vue-3-2f6f5e)](https://vuejs.org/)
 [![MySQL](https://img.shields.io/badge/MySQL-5.7%2B-2f6f5e)](https://www.mysql.com/)
-[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-2f6f5e)](LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **让虚拟商品从下单、交付、答疑到评价尽量自动完成；正常订单无需盯守，异常订单集中处理。**
 
@@ -17,7 +17,7 @@ XianYu2 是一个面向多租户场景的闲鱼虚拟商品运营系统。买家
 
 它不只是在收到订单后发送一段文本，而是把 **订单发现、幂等入队、库存预占、双通道交付、失败重试和人工复核** 串成可恢复的完整链路。固定内容与卡密两种交付模式严格互斥，账号、商品、消息、订单、库存、任务和 AI 知识库按租户隔离。核心任务链路只依赖 MySQL，不强制引入 Redis 或消息队列，兼顾部署成本与后续扩展。
 
-当前版本：2.0.7 · [查看更新日志](CHANGELOG.md)
+下一正式版本：2.0.8 · [查看更新日志](CHANGELOG.md)
 
 [商家能得到什么](#商家能得到什么) · [技术亮点](#技术亮点) · [解决的问题](#解决的问题) · [能力范围](#能力范围) · [功能入口与使用顺序](#功能入口与使用顺序) · [业务流程](#业务流程) · [技术基线](#技术基线) · [镜像部署](#镜像部署) · [快速启动](#快速启动) · [配置说明](#配置说明) · [开发构建](#开发构建) · [构建与验证](#构建与验证) · [目录与职责](#目录与职责) · [日常运维](#日常运维) · [使用边界](#使用边界) · [许可证与免责声明](#许可证与免责声明) · [Star History](#star-history)
 
@@ -181,11 +181,11 @@ flowchart LR
 
 ## 镜像部署
 
-每个正式 Release 会自动发布 `linux/amd64` 镜像到 GitHub Container Registry。固定版本适合生产部署，`latest` 适合体验最新正式版本。
+每个正式 `vX.Y.Z` Release 会发布 `linux/amd64` 镜像、同一构建产出的 JAR、签名的 host package、`SHA256SUMS.txt`、`release-manifest.json` 与 Cosign 签名。生产环境只使用 manifest 指定的不可变 digest，项目不发布或使用 `latest`。
 
-### 自动部署门禁与 Playwright 基础镜像
+`main` 与 PR 仅执行迁移校验、测试和容器烟测，不会连接或部署任何服务器。正式发布在测试、JAR 构建、镜像 digest 烟测和签名验证均成功后才创建 GitHub Release。
 
-推送到 `main` 的运行时变更会依次执行 Flyway 校验、独立 Maven 测试、业务镜像构建，以及带临时 MySQL 8.4 的容器启动烟测。只有镜像内应用完成数据库迁移且 `/actuator/health` 返回 `UP`，工作流才会连接生产服务器部署。部署失败时会保留容器状态、Actuator 响应和最近日志，并按 Flyway、Spring Bean、数据库连接或健康检查分类后自动回滚。
+### Playwright 基础镜像
 
 Playwright Chromium 使用版本锁定的 `ghcr.io/daki-l/xianyu2-playwright:v<Playwright版本>` 基础镜像，不再随每次业务镜像构建下载。仅在以下内容改变时，工作流才重建基础镜像：
 
@@ -193,38 +193,140 @@ Playwright Chromium 使用版本锁定的 `ghcr.io/daki-l/xianyu2-playwright:v<P
 - `Dockerfile` 中的 Playwright 基础镜像引用；
 - `pom.xml` 中的 `com.microsoft.playwright:playwright` 版本。
 
-三处版本必须完全一致，CI 会在构建前校验。升级 Playwright 时应同步更新 `pom.xml`、`Dockerfile.playwright-base` 和 `Dockerfile` 的基础镜像标签，并确认 GHCR 中 `xianyu2-playwright` 包的读取权限与业务镜像一致。仅文档、图片和设计资料的 `main` 分支提交会跳过生产构建与部署。
+三处版本必须完全一致，CI 会在构建前校验。升级 Playwright 时应同步更新 `pom.xml`、`Dockerfile.playwright-base` 和 `Dockerfile` 的基础镜像标签，并确认 GHCR 中 `xianyu2-playwright` 包的读取权限与业务镜像一致。
+
+### Linux 生产安装与在线更新
+
+生产安装使用两份环境文件：项目目录的 `.env` 仅保存数据库、JWT 等私密配置；`/etc/xianyu2/release.env` 仅保存由更新代理管理的不可变镜像 digest。不要将 GitHub Token、镜像 digest 或数据库密码写入对方文件。首发演练期间在 root 所有、容器用户不可写的 `.env` 中保持 `UPDATE_ENABLED=false`；受控实例验证通过后才由宿主机管理员改为 `true` 并重建 app。该开关只允许或拒绝 HTTP 更新请求，不能绕过更新代理的验签与健康检查。
+
+宿主机需要 Docker Engine、Docker Compose v2、`curl`、`jq`、`flock`、`sha256sum`、GNU `timeout` 与 Cosign。请仅从 [Sigstore 官方安装说明](https://docs.sigstore.dev/cosign/system_config/installation/) 选择固定的 Cosign 版本，并先核对该版本官方发布的 SHA-256、再执行 `cosign version`。更新代理不会自动安装或升级这些宿主机依赖。
 
 ```bash
-docker pull ghcr.io/daki-l/xianyu2:v2.0.7
-docker pull ghcr.io/daki-l/xianyu2:latest
+# 每次首次安装固定一个正式 tag；不要 clone 默认分支或直接执行其脚本。
+set -Eeuo pipefail
+RELEASE_TAG=v2.0.8
+RELEASE_API="https://api.github.com/repos/Daki-l/XianYu2/releases/tags/${RELEASE_TAG}"
+COSIGN_IDENTITY="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${RELEASE_TAG}"
+COSIGN_ISSUER='https://token.actions.githubusercontent.com'
+WORK_DIR="$(mktemp -d)"
+cd "$WORK_DIR"
+curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+  -H 'Accept: application/vnd.github+json' "$RELEASE_API" -o release.json
+
+# 只接受精确 tag 的正式 Release，以及唯一的一对 manifest asset。
+jq -e --arg tag "$RELEASE_TAG" '
+  .tag_name == $tag and .draft == false and .prerelease == false
+  and ([.assets[] | select(.name == "release-manifest.json" and (.id | type) == "number")] | length == 1)
+  and ([.assets[] | select(.name == "release-manifest.json.bundle" and (.id | type) == "number")] | length == 1)
+' release.json >/dev/null
+
+release_asset_id() {
+  jq -er --arg name "$1" '
+    [.assets[] | select(.name == $name and (.id | type) == "number") | .id]
+    | if length == 1 then .[0] else error("asset count") end
+  ' release.json
+}
+
+download_asset() {
+  local name="$1" asset_id effective_url
+  asset_id="$(release_asset_id "$name")"
+  effective_url="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 \
+    -H 'Accept: application/octet-stream' -H 'User-Agent: XianYu2-bootstrap' \
+    --output "$name" --write-out '%{url_effective}' \
+    "https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}")"
+  case "$effective_url" in
+    https://api.github.com/*|https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
+    *) rm -f "$name"; return 1 ;;
+  esac
+}
+download_asset release-manifest.json
+download_asset release-manifest.json.bundle
+cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+  --certificate-oidc-issuer "$COSIGN_ISSUER" --bundle release-manifest.json.bundle release-manifest.json
+
+MANIFEST_COMMIT="$(jq -er --arg tag "$RELEASE_TAG" '
+  if .schemaVersion == 1 and .releaseTag == $tag and (.commitSha | test("^[0-9a-f]{40}$"))
+  then .commitSha else error("invalid signed manifest") end
+' release-manifest.json)"
+TAG_REF="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+  -H 'Accept: application/vnd.github+json' \
+  "https://api.github.com/repos/Daki-l/XianYu2/git/ref/tags/${RELEASE_TAG}")"
+if [[ "$(jq -r '.object.type' <<<"$TAG_REF")" == tag ]]; then
+  TAG_OBJECT="$(jq -er '.object.sha' <<<"$TAG_REF")"
+  TAG_REF="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+    -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/Daki-l/XianYu2/git/tags/${TAG_OBJECT}")"
+fi
+[[ "$(jq -r '.object.type' <<<"$TAG_REF")" == commit ]]
+[[ "$(jq -r '.object.sha' <<<"$TAG_REF")" == "$MANIFEST_COMMIT" ]]
+
+HOST_PACKAGE="$(jq -er '.hostPackage.name | select(test("^[A-Za-z0-9._-]+\\.tar\\.gz$"))' release-manifest.json)"
+HOST_PACKAGE_SHA="$(jq -er '.hostPackage.sha256 | select(test("^[0-9a-f]{64}$"))' release-manifest.json)"
+HOST_PACKAGE_SIZE="$(jq -er '.hostPackage.size | select(type == "number" and . > 0 and floor == .)' release-manifest.json)"
+download_asset "$HOST_PACKAGE"
+download_asset "${HOST_PACKAGE}.bundle"
+[[ "$(stat -c '%s' "$HOST_PACKAGE")" == "$HOST_PACKAGE_SIZE" ]]
+printf '%s  %s\n' "$HOST_PACKAGE_SHA" "$HOST_PACKAGE" | sha256sum --check -
+cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+  --certificate-oidc-issuer "$COSIGN_ISSUER" --bundle "${HOST_PACKAGE}.bundle" "$HOST_PACKAGE"
+
+# 只解出由发布包允许的常规文件和目录；拒绝链接、路径逃逸和额外文件。
+PACKAGE_ROOT="xianyu2-host-package-v${RELEASE_TAG#v}"
+tar -tzf "$HOST_PACKAGE" | awk -v root="$PACKAGE_ROOT" '
+  index($0, root "/") != 1 { exit 1 }
+  { path = substr($0, length(root) + 2) }
+  path == "" { next }
+  path ~ /(^|\/)\.\.($|\/)/ || path ~ /^\// || path ~ /\/\// { exit 1 }
+  path == ".env.example" || path == "compose.yaml" || path == "deploy/" || path ~ /^deploy\/(nginx|server|update)(\/|$)/ { next }
+  { exit 1 }
+'
+tar -tvzf "$HOST_PACKAGE" | awk '$1 ~ /^[-d]/ { next } { exit 1 }'
+for required_path in .env.example compose.yaml deploy/update/agent-version deploy/update/xianyu2-update-agent deploy/update/xianyu2-update-agent.service deploy/update/xianyu2-update-agent.path deploy/update/update-agent.conf.example deploy/update/backup-mysql deploy/update/install-update-agent.sh deploy/update/install-release.sh; do
+  tar -tzf "$HOST_PACKAGE" | grep -Fx "${PACKAGE_ROOT}/${required_path}" >/dev/null
+done
+STAGE_DIR="$(mktemp -d)"
+tar --extract --gzip --file "$HOST_PACKAGE" --directory "$STAGE_DIR" --strip-components=1 \
+  --no-same-owner --no-same-permissions --numeric-owner
+sudo install -d -m 0755 /opt/xianyu2
+sudo cp -R --no-preserve=mode,ownership "$STAGE_DIR/." /opt/xianyu2/
+sudo chown -R root:root /opt/xianyu2
+cd /opt/xianyu2
+
+# 准备 .env；此文件保存私密配置，不会被更新代理重写。
+sudo cp .env.example .env
+sudo chmod 0600 .env
+sudoedit .env
+
+# 安装来自已验证 host package 的更新代理。
+sudo bash deploy/update/install-update-agent.sh
+sudoedit /etc/xianyu2/update-agent.conf
+# 确认 PROJECT_DIR、COMPOSE_FILE、ENV_FILE、目录路径和数据库备份 hook 路径
+# 首次执行只安装文件并生成配置；保存配置后再次执行以检查依赖并启用 systemd Path unit
+sudo bash deploy/update/install-update-agent.sh
+
+# 从该正式 Release 完成首次安装
+sudo bash deploy/update/install-release.sh "$RELEASE_TAG"
 ```
 
-使用仓库内的 Docker Compose 启动固定版本：
+安装脚本会创建四类目录：应用仅能写入 `update/request`，应用只读 `update/status` 与 `runtime`，代理私有的 `update/private` 不挂载进容器。受控实例验证完成且宿主机管理员将 `UPDATE_ENABLED` 显式设为 `true` 后，管理后台管理员才能提交更新请求。代理会验证 GitHub OIDC Cosign 身份、JAR 哈希、镜像 digest 和 provenance、运行时 fingerprint；日常业务版本替换 JAR，Java/Playwright/系统依赖变化拉取新镜像。安装状态缺失或不匹配时不会覆盖 runtime JAR，而是安全地切换到 Release 的完整镜像基线。包含 Flyway 迁移的既有实例会先执行备份 hook，备份或健康检查失败时不会继续安装。
 
-Linux：
+若更新界面显示“需要人工处理”，说明 Release 改动了 Compose、更新代理、systemd、目录权限或其他宿主机契约。该 Release 的 `release-manifest.json` 若包含新的 `hostPackage`，必须先按上方相同的 Cosign 身份、SHA-256 和 bundle 验证步骤下载并安装该 package；不要从默认分支复制脚本。完成 Release Notes 中的宿主机调整后，再以 root 执行：
 
 ```bash
-cp .env.example .env
-# 修改 .env 中的数据库密码和 JWT 强密钥
-export APP_IMAGE=ghcr.io/daki-l/xianyu2:v2.0.7
-docker compose pull app
-docker compose up -d --no-build
+sudo /usr/local/lib/xianyu2/xianyu2-update-agent --apply-manual-release vX.Y.Z
 ```
 
-Windows PowerShell：
+这个命令会重新执行同一套验签、备份、镜像拉取和健康检查；它不能通过管理后台调用。Flyway 已开始迁移后若健康检查失败，代理不会尝试数据库回退，应按状态文件、备份和容器日志人工恢复。
 
-```powershell
-Copy-Item .env.example .env
-notepad .env
-$env:APP_IMAGE = 'ghcr.io/daki-l/xianyu2:v2.0.7'
-docker compose pull app
-docker compose up -d --no-build
+生产 Compose 命令必须显式加载两份文件：
+
+```bash
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml up -d
 ```
 
-镜像启动仍依赖 `.env` 中的 MySQL、JWT 和跨域配置。Windows Docker Desktop 需要使用 Linux 容器模式。生产环境建议固定版本标签，避免 `latest` 更新带来未计划的版本变化。
+Windows Docker Desktop 可用 `compose.dev.yaml` 做功能开发和验证，但 systemd 更新代理仅支持 Linux 宿主机。
 
-## 快速启动
+## 本地开发快速启动
 
 ### 环境要求
 
@@ -233,20 +335,20 @@ docker compose up -d --no-build
 - Linux 生产环境建议 2 核、2 GB 内存起步
 - Windows 可使用 Docker Desktop 完成功能测试
 
-### Linux
+### Linux（开发环境）
 
 ```bash
 chmod +x install.sh
-./install.sh
+./install.sh --development
 ```
 
-### Windows PowerShell
+### Windows PowerShell（开发环境）
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
-docker compose up -d --build
-docker compose ps
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml ps
 ```
 
 启动前必须修改 `.env` 中的三个示例密钥。`JWT_SECRET` 至少使用 32 个随机字节，数据库密码不得复用。
@@ -255,7 +357,9 @@ docker compose ps
 
 全新数据库首次访问会进入租户账号创建页；已有租户时可从登录页继续注册新租户，密码长度限制为 8 至 72 位。
 
-### 公网 HTTPS
+### 公网 HTTPS（Release 生产环境）
+
+先按上方“Linux 生产安装与在线更新”完成 Release 安装。不要在生产主机上使用 `--build` 或 `compose.dev.yaml`。
 
 1. 将证书保存为：
 
@@ -274,7 +378,7 @@ TRUST_PROXY=true
 3. 启动代理配置：
 
 ```bash
-docker compose --profile proxy up -d --build
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml --profile proxy up -d
 ```
 
 4. 域名解析到服务器后访问 `https://shop.example.com`。
@@ -294,7 +398,8 @@ docker compose --profile proxy up -d --build
 | `JWT_SECRET` | 登录令牌签名密钥 | 48 字节以上随机值 |
 | `ALLOWED_ORIGINS` | 允许访问的前端来源 | 完整 HTTPS 域名 |
 | `TRUST_PROXY` | 是否信任代理头 | 仅 Nginx 部署设为 `true` |
-| `UPDATE_RELEASE_API` | GitHub 发行版 API | 可选；配置有效 Release 地址后启用更新检查 |
+| `UPDATE_RELEASE_API` | 固定 GitHub Release API | 默认官方公开地址；不要改为任意下载 URL |
+| `UPDATE_ENABLED` | 是否允许管理后台发起在线更新 | 首发默认 `false`；仅由宿主机管理员在验证后改为 `true` |
 | `DB_POOL_MAX_SIZE` | 最大数据库连接数 | 单实例默认 `10` |
 | `DB_POOL_MIN_IDLE` | 最小空闲连接数 | 默认 `2` |
 | `JAVA_OPTS` | JVM 容器内存策略 | 默认值适合小型实例 |
@@ -390,24 +495,24 @@ compose.yaml             应用、MySQL、Nginx 编排
 
 ## 日常运维
 
-查看状态与日志：
+查看 Release 生产环境状态与日志：
 
 ```bash
-docker compose ps
-docker compose logs -f --tail=200 app
-docker compose logs -f --tail=200 mysql
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml ps
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml logs -f --tail=200 app
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml logs -f --tail=200 mysql
 ```
 
-更新本地代码后：
+开发环境更新本地代码后：
 
 ```bash
-docker compose up -d --build
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml up -d --build
 ```
 
 备份 MySQL：
 
 ```bash
-docker compose exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
+docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.yaml exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
 ```
 
 恢复前应先停止应用写入并验证备份文件。业务数据导出不包含 Cookie、AI Key、邮箱密码等敏感配置，灾备流程需单独保存运行环境变量和证书。
@@ -421,13 +526,11 @@ docker compose exec mysql mysqldump -uxianyu2 -p xianyu2 > xianyu2.sql
 
 ## 许可证与免责声明
 
-本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，仅授权个人学习、技术研究、实验和其他非商业用途。
-
-**禁止任何商业用途**，包括销售、收费部署、托管服务、SaaS、代运营、商业获客、收费培训，以及通过广告、订阅、佣金或增值服务直接或间接获利。
+本项目采用 [MIT License](LICENSE) 开源。
 
 - 使用行为必须遵守法律法规、闲鱼平台服务协议和账号使用规则。
 
-下载、复制、修改、部署、运行或分发本项目，即表示已阅读并接受 [完整使用限制与免责声明](DISCLAIMER.md)。
+使用前请阅读 [使用风险与免责声明](DISCLAIMER.md)。
 
 ## ⭐ Star History
 

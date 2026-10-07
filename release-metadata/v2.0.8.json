@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.8",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 1,
+  "manual": {
+    "reason": "这是统一 Release 更新机制的首个版本，需先部署新的 Compose 挂载、systemd 更新代理和目录权限。",
+    "instructions": "验证并安装本 Release 的 host package，检查 /etc/xianyu2/update-agent.conf 与 .env 后，再由 root 执行首次安装或 --apply-manual-release。"
+  }
+}

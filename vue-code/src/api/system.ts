@@ -12,19 +12,25 @@ export interface CurrentUser {
 
 export interface SystemUpdateStatus {
   available: boolean
+  enabled: boolean
+  statusTrusted?: boolean
   requestPending: boolean
   active: boolean
   canRetry: boolean
   taskId?: string
   version?: string
   status: 'IDLE' | 'REQUESTED' | 'CHECKING' | 'DOWNLOADING' | 'VERIFYING'
-    | 'INSTALLING' | 'RESTARTING' | 'HEALTH_CHECKING' | 'SUCCESS' | 'FAILED'
+    | 'BACKING_UP' | 'INSTALLING' | 'RESTARTING' | 'HEALTH_CHECKING' | 'SUCCESS' | 'FAILED' | 'MANUAL_REQUIRED'
   progress: number
   message?: string
   downloadedBytes: number
   totalBytes: number
   requestedAt?: string
+  taskStartedAt?: string
+  stageStartedAt?: string
   updatedAt?: string
+  timeoutSeconds?: number
+  detail?: string
 }
 
 /** 获取当前用户信息 */
@@ -58,9 +64,12 @@ export function checkUpdate() {
     currentVersion: string
     latestVersion: string
     hasUpdate: boolean
+    updateEnabled: boolean
     updateContent: string
     publishedAt: string
     downloadUrl: string
+    releaseTag?: string
+    manifestAssetId?: number
   }>({
     url: '/system/checkUpdate',
     method: 'get'

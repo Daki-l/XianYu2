@@ -6,6 +6,13 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 BOOTSTRAP_ADMIN_PASSWORD=""
 
+if [[ "${1:-}" != '--development' || $# -ne 1 ]]; then
+    echo 'This bootstrap script is for local development only.' >&2
+    echo 'Use the GitHub Release installation instructions for Linux production.' >&2
+    echo "Usage: $0 --development" >&2
+    exit 64
+fi
+
 random_hex() {
     local bytes="$1"
     if command -v openssl >/dev/null 2>&1; then
@@ -44,8 +51,8 @@ if [ ! -f .env ]; then
     chmod 600 .env
 fi
 
-docker compose up -d --build
-docker compose ps
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml up -d --build
+docker compose --env-file compose.dev.env -f compose.yaml -f compose.dev.yaml ps
 
 echo
 echo "XianYu2 已启动: http://localhost:12400"
@@ -53,5 +60,4 @@ if [ -n "$BOOTSTRAP_ADMIN_PASSWORD" ]; then
     echo "初始管理员: admin"
     echo "初始密码: $BOOTSTRAP_ADMIN_PASSWORD"
 fi
-echo "公网部署需先配置 deploy/nginx/certs、ALLOWED_ORIGINS 和 TRUST_PROXY，再执行:"
-echo "docker compose --profile proxy up -d"
+echo 'This development environment is not the production Release update path.'

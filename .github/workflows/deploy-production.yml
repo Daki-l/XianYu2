@@ -1,9 +1,8 @@
-name: Build and Verify XianYu2
+name: Verify XianYu2
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
     paths-ignore:
       - '*.md'
       - '**/*.md'
@@ -19,37 +18,45 @@ on:
       - 'CHANGELOG.md'
       - 'DISCLAIMER.md'
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
-  # PR 与 main 的构建校验必须隔离，避免不同分支的任务互相取消。
-  group: xianyu2-${{ github.workflow }}-${{ github.ref }}
+  group: xianyu2-verify-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ghcr.io/daki-l/xianyu2
   PLAYWRIGHT_BASE_IMAGE: ghcr.io/daki-l/xianyu2-playwright
 
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Lint workflow configuration
+        run: |
+          set -Eeuo pipefail
+          bash scripts/ci/check-workflow-pinning.sh
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.9
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
+
   migration-check:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
-      - name: Check out source and history
-        uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-
       - name: Check migration versions
         env:
           BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          set -Eeuo pipefail
           base_sha="$BASE_SHA"
           if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
             base_sha="$(git rev-parse "${HEAD_SHA}^")"
@@ -60,20 +67,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-
     steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Set up Java and Maven cache
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '21'
           cache: maven
-
       - name: Run Maven tests
-        run: ./mvnw -B test
+        run: |
+          ./mvnw -B -Drevision=0.0.0-dev+${GITHUB_SHA::12} test
+          bash deploy/update/test-update-agent.sh
+          bash scripts/release/test-release-packaging.sh
 
   playwright-base-check:
     runs-on: ubuntu-latest
@@ -82,19 +87,17 @@ jobs:
     outputs:
       should-build: ${{ steps.config.outputs.should-build }}
       version: ${{ steps.config.outputs.version }}
-
     steps:
-      - name: Check out source and history
-        uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-
-      - name: Validate Playwright base image configuration
-        id: config
+      - id: config
+        name: Validate Playwright base image configuration
         env:
           BASE_SHA: ${{ github.event.before || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.sha }}
         run: |
+          set -Eeuo pipefail
           base_sha="$BASE_SHA"
           if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
             base_sha="$(git rev-parse "${HEAD_SHA}^")"
@@ -103,35 +106,25 @@ jobs:
           should_build="$(bash scripts/ci/check-playwright-base.sh --changed "$base_sha" "$HEAD_SHA")"
           printf 'version=%s\nshould-build=%s\n' "$version" "$should_build" >> "$GITHUB_OUTPUT"
 
-  playwright-base:
-    needs:
-      - test
-      - playwright-base-check
+  publish-playwright-base:
+    needs: [workflow-lint, test, playwright-base-check]
     if: >-
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
-      needs.test.result == 'success' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      needs.workflow-lint.result == 'success' && needs.test.result == 'success' &&
       needs.playwright-base-check.outputs.should-build == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push Playwright browser base image
-        uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: ./Dockerfile.playwright-base
@@ -145,82 +138,28 @@ jobs:
           cache-from: type=gha,scope=playwright-base
           cache-to: type=gha,mode=max,scope=playwright-base
 
-  build:
-    needs:
-      - migration-check
-      - test
-      - playwright-base
+  build-and-smoke-test:
+    needs: [workflow-lint, migration-check, test, playwright-base-check, publish-playwright-base]
     if: >-
-      always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' &&
-      needs.migration-check.result == 'success' &&
-      needs.test.result == 'success' &&
-      (needs.playwright-base.result == 'success' || needs.playwright-base.result == 'skipped')
+      always() && needs.workflow-lint.result == 'success' && needs.migration-check.result == 'success' && needs.test.result == 'success' &&
+      (needs.publish-playwright-base.result == 'success' || needs.publish-playwright-base.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    outputs:
-      image: ${{ env.IMAGE_NAME }}
-      digest: ${{ steps.build.outputs.digest }}
-
     steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  smoke-test:
-    needs: build
-    # 必须 always()：不带状态函数时，依赖闭包中被跳过的 job（如 playwright-base）
-    # 会把本 job 级联跳过，导致未改动 Playwright 的常规提交跳过镜像烟测。
-    if: always() && needs.build.result == 'success'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Check out smoke test script
-        uses: actions/checkout@v6
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull image by immutable digest
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build a local Playwright base when a pull request changes it
+        if: github.event_name == 'pull_request' && needs.playwright-base-check.outputs.should-build == 'true'
+        run: docker build -f Dockerfile.playwright-base -t xianyu2-playwright:ci .
+      - name: Build development image and run health smoke test
         env:
-          IMAGE: ${{ needs.build.outputs.image }}
-          DIGEST: ${{ needs.build.outputs.digest }}
-        run: docker pull "$IMAGE@$DIGEST"
-
-      - name: Start application and verify actuator health
-        env:
-          IMAGE: ${{ needs.build.outputs.image }}
-          DIGEST: ${{ needs.build.outputs.digest }}
-        run: bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
+          IMAGE: xianyu2:ci-${{ github.sha }}
+          PLAYWRIGHT_OVERRIDE: ${{ github.event_name == 'pull_request' && needs.playwright-base-check.outputs.should-build == 'true' && 'xianyu2-playwright:ci' || format('{0}:v{1}', env.PLAYWRIGHT_BASE_IMAGE, needs.playwright-base-check.outputs.version) }}
+        run: |
+          docker build -f Dockerfile.dev \
+            --build-arg APP_VERSION="0.0.0-dev+${GITHUB_SHA::12}" \
+            --build-arg PLAYWRIGHT_BASE_IMAGE="$PLAYWRIGHT_OVERRIDE" \
+            -t "$IMAGE" .
+          bash scripts/ci/smoke-test-container.sh "$IMAGE"
+          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE"
+          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE" deploy/server/compose-existing-mysql.yaml

@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch XianYu2 update requests
+
+[Path]
+PathExists=/var/lib/xianyu2/update/request/request.json
+Unit=xianyu2-update-agent.service
+
+[Install]
+WantedBy=multi-user.target

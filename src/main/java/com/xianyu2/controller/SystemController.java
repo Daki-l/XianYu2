@@ -14,7 +14,6 @@ import com.xianyu2.service.bo.ChangePasswordReqBO;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 
 
@@ -28,9 +27,6 @@ import org.springframework.web.bind.annotation.*;
 public class SystemController {
 
     private static final String MENU_LAYOUT_SETTING_KEY = "menu_layout";
-
-    @Value("${app.version:2.0.7}")
-    private String currentVersion;
 
     @Autowired
     private AuthService authService;
@@ -113,7 +109,7 @@ public class SystemController {
 
     @GetMapping("/version")
     public ResultObject<String> getVersion() {
-        return ResultObject.success(currentVersion);
+        return ResultObject.success(systemUpdateService.currentVersion());
     }
 
     @GetMapping("/checkUpdate")
@@ -126,9 +122,10 @@ public class SystemController {
         } catch (Exception e) {
             log.error("检查更新失败", e);
             VersionInfoRespDTO respDTO = new VersionInfoRespDTO();
-            respDTO.setCurrentVersion(currentVersion);
-            respDTO.setLatestVersion(currentVersion);
+            respDTO.setCurrentVersion(systemUpdateService.currentVersion());
+            respDTO.setLatestVersion(systemUpdateService.currentVersion());
             respDTO.setHasUpdate(false);
+            respDTO.setUpdateEnabled(systemUpdateService.updateEnabled());
             return ResultObject.success(respDTO);
         }
     }

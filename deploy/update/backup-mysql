@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# 示例备份 hook：通过 Compose 中的 MySQL 容器生成可验证 SQL 文件。
+# 安装脚本会以实际 PROJECT_DIR、ENV_FILE 和 RELEASE_ENV_FILE 调用此文件。
+: "${PROJECT_DIR:?PROJECT_DIR is required}"
+: "${COMPOSE_FILE:?COMPOSE_FILE is required}"
+: "${ENV_FILE:?ENV_FILE is required}"
+: "${RELEASE_ENV_FILE:?RELEASE_ENV_FILE is required}"
+: "${BACKUP_DIR:=/var/lib/xianyu2/backups}"
+
+umask 077
+install -d -m 0700 "$BACKUP_DIR"
+backup_path="$BACKUP_DIR/mysql-$(date +%Y%m%dT%H%M%SZ).sql"
+docker compose --project-directory "$PROJECT_DIR" --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" \
+  -f "$COMPOSE_FILE" exec -T mysql sh -ec 'exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" --single-transaction --routines --events "$MYSQL_DATABASE"' \
+  > "$backup_path"
+test -s "$backup_path"
+sha256sum "$backup_path" > "${backup_path}.sha256"
+printf '%s\n' "$backup_path"

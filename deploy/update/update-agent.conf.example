@@ -1,0 +1,25 @@
+# 复制到 /etc/xianyu2/update-agent.conf 后按实际安装路径调整。
+PROJECT_DIR=/opt/xianyu2
+COMPOSE_FILE=/opt/xianyu2/compose.yaml
+ENV_FILE=/opt/xianyu2/.env
+# 该文件仅由 root 代理写入，因此放在 unit 的受限可写目录，而非项目目录。
+RELEASE_ENV_FILE=/etc/xianyu2/release.env
+# 应用只可写 request；status 与 runtime 均以只读 bind mount 暴露给容器。
+UPDATE_REQUEST_DIR=/var/lib/xianyu2/update/request
+UPDATE_STATUS_DIR=/var/lib/xianyu2/update/status
+UPDATE_WORK_DIR=/var/lib/xianyu2/update/private
+RUNTIME_DIR=/var/lib/xianyu2/runtime
+# 必须与 Dockerfile 中的 xianyu2 容器用户一致；只用于 request 目录的宿主机所有权。
+APP_UID=10001
+APP_GID=10001
+RELEASE_REPOSITORY=ghcr.io/daki-l/xianyu2
+COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+BACKUP_HOOK=/usr/local/lib/xianyu2/backup-mysql
+HEALTH_TIMEOUT_SECONDS=240
+# 状态心跳、一般恢复、下载校验和数据库备份的阶段超时（秒）。
+HEARTBEAT_INTERVAL_SECONDS=15
+TASK_RECOVERY_TIMEOUT_SECONDS=300
+DOWNLOAD_TIMEOUT_SECONDS=1800
+BACKUP_TIMEOUT_SECONDS=900
+# 整笔任务必须比 systemd 的 TimeoutStartSec 至少早 30 秒结束；默认与 unit 的 45 分钟一致。
+TASK_TOTAL_TIMEOUT_SECONDS=2400

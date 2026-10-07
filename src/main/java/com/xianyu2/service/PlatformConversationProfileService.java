@@ -25,6 +25,7 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class PlatformConversationProfileService {
 
+    private static final String PLATFORM_PROFILE_FETCH_ENABLED_SETTING = "platform_conversation_profile_fetch_enabled";
     private static final long CACHE_SECONDS = 1800;
     private static final long FAILED_CACHE_SECONDS = 300;
 
@@ -33,6 +34,7 @@ public class PlatformConversationProfileService {
     private final AccountService accountService;
     private final XianyuApiCallUtils apiCallUtils;
     private final ObjectMapper objectMapper;
+    private final SysSettingService sysSettingService;
     private final Map<String, CachedProfile> cache = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<Map<String, Object>>> inFlight = new ConcurrentHashMap<>();
 
@@ -58,10 +60,16 @@ public class PlatformConversationProfileService {
         if (cached != null && cached.expiresAt().isAfter(Instant.now())) {
             return cached.profile();
         }
-        Map<String, Object> persisted = recentPersistedProfile(accountId, sessionId);
+        boolean platformFetchEnabled = isPlatformFetchEnabled();
+        Map<String, Object> persisted = persistedProfile(accountId, sessionId, platformFetchEnabled);
         if (persisted != null) {
             cacheProfile(cacheKey, persisted, CACHE_SECONDS);
             return persisted;
+        }
+        if (!platformFetchEnabled) {
+            Map<String, Object> profile = emptyProfile(sessionId);
+            cacheProfile(cacheKey, profile, FAILED_CACHE_SECONDS);
+            return profile;
         }
 
         CompletableFuture<Map<String, Object>> created = new CompletableFuture<>();
@@ -125,17 +133,27 @@ public class PlatformConversationProfileService {
         return Map.copyOf(profile);
     }
 
-    private Map<String, Object> recentPersistedProfile(Long accountId, String sessionId) {
+    private Map<String, Object> persistedProfile(Long accountId, String sessionId, boolean requireFreshProfile) {
         XianyuBuyerProfile profile = buyerProfileMapper.findByBuyer(accountId, normalizeBuyerUserId(sessionId));
-        if (profile == null || profile.getProfileFetchedAt() == null
+        if (profile == null || (requireFreshProfile && (profile.getProfileFetchedAt() == null
                 || profile.getProfileFetchedAt().atZone(ZoneId.systemDefault()).toInstant()
-                .isBefore(Instant.now().minusSeconds(CACHE_SECONDS))) {
+                .isBefore(Instant.now().minusSeconds(CACHE_SECONDS))))) {
             return null;
         }
         Map<String, Object> result = emptyProfile(sessionId);
         result.put("avatar", safe(profile.getBuyerAvatarUrl()));
         result.put("nick", safe(profile.getBuyerUserName()));
         return Map.copyOf(result);
+    }
+
+    private boolean isPlatformFetchEnabled() {
+        try {
+            String value = sysSettingService.getSettingValue(PLATFORM_PROFILE_FETCH_ENABLED_SETTING);
+            return "true".equalsIgnoreCase(value) || "1".equals(value);
+        } catch (Exception ignored) {
+            // 查询开关失败时保持关闭，避免展示增强功能影响账号平台请求配额。
+            return false;
+        }
     }
 
     private void persistProfile(XianyuAccount account, String sessionId, Map<String, Object> profile,

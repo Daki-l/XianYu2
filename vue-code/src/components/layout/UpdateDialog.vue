@@ -13,7 +13,7 @@ import IconSparkle from '@/components/icons/IconSparkle.vue'
 
 declare const __APP_VERSION__: string
 
-const appVersion = __APP_VERSION__ || '2.0.7'
+const appVersion = __APP_VERSION__ || '0.0.0-dev'
 
 const visible = ref(false)
 const loading = ref(false)
@@ -24,9 +24,12 @@ const updateInfo = ref<{
   currentVersion: string
   latestVersion: string
   hasUpdate: boolean
+  updateEnabled: boolean
   updateContent: string
   publishedAt: string
   downloadUrl: string
+  releaseTag?: string
+  manifestAssetId?: number
 } | null>(null)
 
 const isMobile = ref(false)
@@ -38,6 +41,8 @@ const checkMobile = () => {
 const isUpdateAvailable = computed(() => {
   return updateInfo.value?.hasUpdate === true
 })
+
+const isUpdateEnabled = computed(() => updateInfo.value?.updateEnabled === true)
 
 const isUpdateRunning = computed(() => updateTask.value?.active === true)
 
@@ -52,11 +57,13 @@ const stageLabels: Record<SystemUpdateStatus['status'], string> = {
   CHECKING: '检查版本',
   DOWNLOADING: '下载更新',
   VERIFYING: '校验文件',
+  BACKING_UP: '备份数据库',
   INSTALLING: '备份并安装',
   RESTARTING: '重启服务',
   HEALTH_CHECKING: '健康检查',
   SUCCESS: '更新完成',
-  FAILED: '更新失败'
+  FAILED: '更新失败',
+  MANUAL_REQUIRED: '需要人工处理'
 }
 
 const stageLabel = computed(() => {
@@ -87,11 +94,12 @@ const formattedDate = computed(() => {
 })
 
 let pollTimer: number | undefined
+let pollDelay = 2000
 let dialogSession = 0
 
 const stopPolling = () => {
   if (pollTimer !== undefined) {
-    window.clearInterval(pollTimer)
+    window.clearTimeout(pollTimer)
     pollTimer = undefined
   }
 }
@@ -114,18 +122,29 @@ const refreshTask = async () => {
     const response = await getSystemUpdateStatus()
     if (!response.data) return
     updateTask.value = response.data
+    pollDelay = 2000
     if (!response.data.active) {
+      await reloadAfterSuccessfulUpdate()
       stopPolling()
+      return
     }
     await reloadAfterSuccessfulUpdate()
   } catch {
-    // 应用重启期间继续保留轮询，服务恢复后自动读取持久任务状态
+    // 应用重启期间持续退避轮询，服务恢复后自动读取代理持久状态。
+    pollDelay = Math.min(pollDelay * 2, 10000)
+  } finally {
+    if (visible.value && updateTask.value?.active) {
+      pollTimer = window.setTimeout(() => {
+        pollTimer = undefined
+        void refreshTask()
+      }, pollDelay)
+    }
   }
 }
 
 const startPolling = () => {
   if (!visible.value || pollTimer !== undefined) return
-  pollTimer = window.setInterval(refreshTask, 2000)
+  void refreshTask()
 }
 
 const open = async () => {
@@ -147,6 +166,7 @@ const open = async () => {
         currentVersion: appVersion,
         latestVersion: updateTask.value.version || appVersion,
         hasUpdate: updateTask.value.status !== 'SUCCESS',
+        updateEnabled: false,
         updateContent: '',
         publishedAt: '',
         downloadUrl: ''
@@ -178,7 +198,7 @@ const close = () => {
 }
 
 const startUpdate = async () => {
-  if (submitting.value || isUpdateRunning.value || !updateInfo.value?.hasUpdate) return
+  if (submitting.value || isUpdateRunning.value || !updateInfo.value?.hasUpdate || !isUpdateEnabled.value) return
   const session = dialogSession
   submitting.value = true
   localError.value = ''
@@ -258,7 +278,7 @@ defineExpose({ open })
               v-if="updateTask && updateTask.status !== 'IDLE'"
               class="update-progress"
               :class="{
-                'is-failed': updateTask.status === 'FAILED',
+              'is-failed': updateTask.status === 'FAILED' || updateTask.status === 'MANUAL_REQUIRED',
                 'is-success': updateTask.status === 'SUCCESS'
               }"
             >
@@ -270,6 +290,7 @@ defineExpose({ open })
                 <span :style="{ width: `${progressPercent}%` }"></span>
               </div>
               <div class="progress-message">{{ updateTask.message }}</div>
+              <div v-if="updateTask.detail" class="progress-message">{{ updateTask.detail }}</div>
               <div v-if="downloadText || taskUpdatedAt" class="progress-meta">
                 <span v-if="downloadText">{{ downloadText }}</span>
                 <span v-if="taskUpdatedAt">更新于 {{ taskUpdatedAt }}</span>
@@ -295,7 +316,7 @@ defineExpose({ open })
             <button
               v-if="isUpdateAvailable"
               class="btn btn-primary"
-              :disabled="submitting || isUpdateRunning"
+              :disabled="submitting || isUpdateRunning || !isUpdateEnabled || updateTask?.status === 'MANUAL_REQUIRED'"
               @click="startUpdate"
             >
               {{
@@ -303,7 +324,11 @@ defineExpose({ open })
                   ? '正在提交'
                   : isUpdateRunning
                     ? '更新进行中'
-                    : updateTask?.status === 'FAILED'
+                    : updateTask?.status === 'MANUAL_REQUIRED'
+                      ? '需要人工处理'
+                      : !isUpdateEnabled
+                        ? '等待宿主机启用'
+                      : updateTask?.status === 'FAILED'
                       ? '重新尝试'
                       : '立即更新'
               }}

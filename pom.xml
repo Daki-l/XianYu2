@@ -10,14 +10,14 @@
     </parent>
     <groupId>com.xianyu2</groupId>
     <artifactId>xianyu2</artifactId>
-    <version>2.0.7</version>
+    <version>${revision}</version>
     <name>XianYu2</name>
     <description>多租户闲鱼虚拟商品运营与自动交付系统</description>
     <url/>
     <licenses>
         <license>
-            <name>PolyForm Noncommercial License 1.0.0</name>
-            <url>https://polyformproject.org/licenses/noncommercial/1.0.0/</url>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
         </license>
     </licenses>
     <developers>
@@ -30,6 +30,7 @@
         <url/>
     </scm>
     <properties>
+        <revision>0.0.0-dev</revision>
         <java.version>21</java.version>
         <spring-ai.version>1.1.4</spring-ai.version>
     </properties>
@@ -208,6 +209,13 @@
                         </exclude>
                     </excludes>
                 </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>

@@ -1,0 +1,363 @@
+name: Release XianYu2
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing protected vX.Y.Z tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: xianyu2-release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ghcr.io/daki-l/xianyu2
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag and history
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Lint workflow configuration
+        run: |
+          set -Eeuo pipefail
+          bash scripts/ci/check-workflow-pinning.sh
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.9
+          "$(go env GOPATH)/bin/actionlint" .github/workflows/*.yml
+
+      - name: Validate protected release source
+        id: release
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          version="$(bash scripts/release/resolve-version.sh "$REQUESTED_TAG")"
+          if gh release view "$REQUESTED_TAG" >/dev/null 2>&1; then
+            echo "A GitHub Release already exists for ${REQUESTED_TAG}; publish a new immutable tag instead." >&2
+            exit 1
+          fi
+          git fetch origin main:refs/remotes/origin/main --no-tags
+          commit="$(git rev-parse HEAD)"
+          git show-ref --verify --quiet "refs/tags/${REQUESTED_TAG}"
+          [[ "$(git rev-list -n 1 "$REQUESTED_TAG")" == "$commit" ]]
+          git merge-base --is-ancestor "$commit" origin/main
+          metadata="release-metadata/${REQUESTED_TAG}.json"
+          previous_tag="$(git tag --merged "$commit" --list 'v*' --sort=-v:refname \
+            | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+            | grep -Fxv "$REQUESTED_TAG" | head -n 1 || true)"
+          metadata_validation_args=(--tag "$REQUESTED_TAG" --metadata "$metadata" \
+            --agent-version-file deploy/update/agent-version)
+          if [[ -z "$previous_tag" ]]; then
+            metadata_validation_args+=(--first-release)
+          else
+            previous_agent_version="$(git show "${previous_tag}:deploy/update/agent-version" | tr -d '[:space:]')"
+            metadata_validation_args+=(--previous-agent-version "$previous_agent_version")
+          fi
+          bash scripts/release/validate-release-metadata.sh "${metadata_validation_args[@]}"
+          printf 'tag=%s\nversion=%s\ncommit=%s\nmetadata=%s\n' \
+            "$REQUESTED_TAG" "$version" "$commit" "$metadata" >> "$GITHUB_OUTPUT"
+
+      - name: Validate migration history
+        run: |
+          set -Eeuo pipefail
+          previous_tag="$(git tag --merged HEAD --list 'v*' --sort=-v:refname \
+            | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+            | grep -Fxv '${{ steps.release.outputs.tag }}' | head -n 1 || true)"
+          if [[ -n "$previous_tag" ]]; then
+            bash scripts/ci/check-migration-versions.sh "$previous_tag" HEAD
+          fi
+
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Set up Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: vue-code/package-lock.json
+
+      - name: Build frontend once
+        working-directory: vue-code
+        env:
+          APP_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          npm ci
+          npm run type-check
+          npm run build:spring
+
+      - name: Test and package the only release JAR
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+        run: |
+          ./mvnw -B -Drevision="$RELEASE_VERSION" test
+          bash deploy/update/test-update-agent.sh
+          bash scripts/release/test-release-packaging.sh
+          ./mvnw -B -DskipTests -Drevision="$RELEASE_VERSION" package
+          build_info="$(unzip -p "target/xianyu2-${RELEASE_VERSION}.jar" META-INF/build-info.properties 2>/dev/null || true)"
+          grep -Fx "build.version=${RELEASE_VERSION}" <<< "$build_info" >/dev/null
+          jar tf "target/xianyu2-${RELEASE_VERSION}.jar" | grep -E '^BOOT-INF/classes/static/assets/.*\.js$' >/dev/null
+          unzip -p "target/xianyu2-${RELEASE_VERSION}.jar" 'BOOT-INF/classes/static/assets/*.js' | grep -Fq "\"${RELEASE_VERSION}\""
+          mkdir -p release-artifact release-assets
+          cp "target/xianyu2-${RELEASE_VERSION}.jar" release-artifact/xianyu2.jar
+          cp release-artifact/xianyu2.jar "release-assets/xianyu2-v${RELEASE_VERSION}.jar"
+          bash scripts/release/build-host-package.sh \
+            --version "$RELEASE_VERSION" --commit "$RELEASE_COMMIT" \
+            --output "release-assets/xianyu2-host-package-v${RELEASE_VERSION}.tar.gz"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+
+      - name: Publish missing Playwright base image for this release
+        id: playwright-base
+        run: |
+          set -Eeuo pipefail
+          playwright_version="$(bash scripts/ci/check-playwright-base.sh --version '${{ steps.release.outputs.commit }}')"
+          base_image="ghcr.io/daki-l/xianyu2-playwright:v${playwright_version}"
+          if docker manifest inspect "$base_image" >/dev/null 2>&1; then
+             :
+           else
+             docker buildx build --platform linux/amd64 --push \
+               --file Dockerfile.playwright-base \
+               --tag "$base_image" .
+          fi
+           docker pull "$base_image"
+           base_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$base_image")"
+           [[ "$base_digest_ref" =~ ^ghcr\.io/daki-l/xianyu2-playwright@sha256:[0-9a-f]{64}$ ]]
+           printf 'image=%s\n' "$base_digest_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve immutable Java runtime base
+        id: jre-base
+        run: |
+          set -Eeuo pipefail
+          jre_image='eclipse-temurin:21-jre-jammy'
+          docker pull "$jre_image"
+          jre_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$jre_image")"
+          [[ "$jre_digest_ref" =~ ^(eclipse-temurin|docker\.io/library/eclipse-temurin)@sha256:[0-9a-f]{64}$ ]]
+          printf 'image=%s\n' "$jre_digest_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve prior verified runtime fingerprint
+        id: previous-runtime
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          previous_tag="$(git tag --merged HEAD --list 'v*' --sort=-v:refname \
+            | grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' \
+            | grep -Fxv "$TAG" | head -n 1 || true)"
+          if [[ -z "$previous_tag" ]]; then
+            printf 'fingerprint=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous_dir="$(mktemp -d)"
+          cleanup_previous() { rm -rf "$previous_dir"; }
+          trap cleanup_previous EXIT
+          if ! gh release download "$previous_tag" --pattern release-manifest.json \
+              --pattern release-manifest.json.bundle --dir "$previous_dir"; then
+            printf 'fingerprint=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous_identity="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${previous_tag}"
+          if ! cosign verify-blob --certificate-identity "$previous_identity" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --bundle "$previous_dir/release-manifest.json.bundle" "$previous_dir/release-manifest.json"; then
+            printf 'fingerprint=\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          previous_fingerprint="$(jq -er '.runtimeFingerprint | strings | select(test("^[A-Za-z0-9._:-]+$"))' "$previous_dir/release-manifest.json" || true)"
+          printf 'fingerprint=%s\n' "$previous_fingerprint" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve runtime fingerprint
+        id: runtime
+        run: |
+          echo "fingerprint=$(bash scripts/release/runtime-fingerprint.sh '${{ steps.release.outputs.commit }}' \
+            --playwright-base '${{ steps.playwright-base.outputs.image }}' \
+            --jre-base '${{ steps.jre-base.outputs.image }}')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and publish immutable application image
+        id: image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: .
+          file: ./Dockerfile
+          build-contexts: |
+            release_artifact=./release-artifact
+          build-args: |
+            APP_VERSION=${{ steps.release.outputs.version }}
+            RUNTIME_FINGERPRINT=${{ steps.runtime.outputs.fingerprint }}
+            PLAYWRIGHT_BASE_IMAGE=${{ steps.playwright-base.outputs.image }}
+            JRE_BASE_IMAGE=${{ steps.jre-base.outputs.image }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_NAME }}:${{ steps.release.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.release.outputs.commit }}
+            org.opencontainers.image.version=${{ steps.release.outputs.version }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release
+
+      - name: Smoke test the pushed digest
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          docker pull "$IMAGE@$DIGEST"
+          bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
+          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST"
+          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST" deploy/server/compose-existing-mysql.yaml
+          bash scripts/release/verify-release-artifacts.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
+            "${{ steps.release.outputs.version }}" "${{ steps.runtime.outputs.fingerprint }}"
+
+      - name: Generate Release metadata
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          IMAGE: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          METADATA: ${{ steps.release.outputs.metadata }}
+        run: |
+          bash scripts/release/generate-release-manifest.sh \
+            --tag "$TAG" --commit "$COMMIT" \
+            --jar "release-assets/xianyu2-v${TAG#v}.jar" \
+            --host-package "release-assets/xianyu2-host-package-v${TAG#v}.tar.gz" \
+            --metadata "$METADATA" \
+            --runtime-fingerprint "${{ steps.runtime.outputs.fingerprint }}" \
+            --previous-runtime-fingerprint "${{ steps.previous-runtime.outputs.fingerprint }}" \
+            --image-repository "$IMAGE" --image-digest "$DIGEST" \
+            --output release-assets/release-manifest.json
+          (cd release-assets && sha256sum "xianyu2-v${TAG#v}.jar" "xianyu2-host-package-v${TAG#v}.tar.gz" release-manifest.json > SHA256SUMS.txt)
+
+      - name: Sign JAR, manifest and image with GitHub OIDC
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+        run: |
+          set -Eeuo pipefail
+          cosign sign-blob --yes --bundle "release-assets/xianyu2-v${VERSION}.jar.bundle" "release-assets/xianyu2-v${VERSION}.jar"
+          cosign sign-blob --yes --bundle "release-assets/xianyu2-host-package-v${VERSION}.tar.gz.bundle" "release-assets/xianyu2-host-package-v${VERSION}.tar.gz"
+          cosign sign-blob --yes --bundle release-assets/release-manifest.json.bundle release-assets/release-manifest.json
+          cosign sign --yes "$IMAGE@$DIGEST"
+          jq -n --arg commit "$COMMIT" --arg workflow "$WORKFLOW_REF" --arg invocation "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{buildType: "https://github.com/Attestations/GitHubActions@v1", builder: {id: $workflow},
+              invocation: {configSource: {uri: $workflow, digest: {sha1: $commit}, entryPoint: ".github/workflows/release.yml"}},
+              metadata: {buildInvocationId: $invocation}}' > "$RUNNER_TEMP/image-provenance.json"
+          cosign attest --yes --type slsaprovenance --predicate "$RUNNER_TEMP/image-provenance.json" "$IMAGE@$DIGEST"
+
+      - name: Attest release JAR provenance
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-path: release-assets/xianyu2-v${{ steps.release.outputs.version }}.jar
+
+      - name: Create GitHub Release after all checks pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release create "$TAG" release-assets/* --title "XianYu2 ${TAG}" --generate-notes --verify-tag
+
+      - name: Verify published Release and registry anonymously
+        env:
+          IMAGE: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          BASE_IMAGE: ${{ steps.playwright-base.outputs.image }}
+          TAG: ${{ steps.release.outputs.tag }}
+          COSIGN_IDENTITY: https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${{ steps.release.outputs.tag }}
+          COSIGN_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -Eeuo pipefail
+          docker logout ghcr.io || true
+          docker pull "$IMAGE@$DIGEST"
+          docker pull "$BASE_IMAGE"
+          release_json="$(mktemp)"
+          curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/Daki-l/XianYu2/releases/tags/${TAG}" -o "$release_json"
+          test "$(jq -r '.tag_name' "$release_json")" = "$TAG"
+          test "$(jq -r '.draft or .prerelease' "$release_json")" = false
+          download_asset() {
+            local name="$1"
+            local url
+            url="$(jq -er --arg name "$name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0].browser_download_url else error("asset count") end' "$release_json")"
+            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 "$url" -o "$name"
+          }
+          download_asset "xianyu2-v${TAG#v}.jar"
+          download_asset "xianyu2-v${TAG#v}.jar.bundle"
+          download_asset "xianyu2-host-package-v${TAG#v}.tar.gz"
+          download_asset "xianyu2-host-package-v${TAG#v}.tar.gz.bundle"
+          download_asset release-manifest.json
+          download_asset release-manifest.json.bundle
+          download_asset SHA256SUMS.txt
+          cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+            --bundle release-manifest.json.bundle release-manifest.json
+          test "$(jq -r '.releaseTag' release-manifest.json)" = "$TAG"
+          test "$(jq -r '.version' release-manifest.json)" = "${TAG#v}"
+          test "$(jq -r '.image.repository' release-manifest.json)" = "$IMAGE"
+          test "$(jq -r '.image.digest' release-manifest.json)" = "$DIGEST"
+          test "$(jq -r '.jar.name' release-manifest.json)" = "xianyu2-v${TAG#v}.jar"
+          test "$(jq -r '.hostPackage.name' release-manifest.json)" = "xianyu2-host-package-v${TAG#v}.tar.gz"
+          test "$(jq -r '.jar.sha256' release-manifest.json)" = "$(sha256sum "xianyu2-v${TAG#v}.jar" | awk '{print $1}')"
+          test "$(jq -r '.hostPackage.sha256' release-manifest.json)" = "$(sha256sum "xianyu2-host-package-v${TAG#v}.tar.gz" | awk '{print $1}')"
+          test "$(jq -r '.jar.size' release-manifest.json)" = "$(stat -c '%s' "xianyu2-v${TAG#v}.jar")"
+          test "$(jq -r '.hostPackage.size' release-manifest.json)" = "$(stat -c '%s' "xianyu2-host-package-v${TAG#v}.tar.gz")"
+          sha256sum --check SHA256SUMS.txt
+          cosign verify --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "$IMAGE@$DIGEST"
+          cosign verify-attestation --type slsaprovenance \
+            --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "$IMAGE@$DIGEST"
+          cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+            --bundle "xianyu2-v${TAG#v}.jar.bundle" "xianyu2-v${TAG#v}.jar"
+          cosign verify-blob --certificate-identity "$COSIGN_IDENTITY" \
+            --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+            --bundle "xianyu2-host-package-v${TAG#v}.tar.gz.bundle" "xianyu2-host-package-v${TAG#v}.tar.gz"
+
+      - name: Delete Release if anonymous verification failed
+        if: failure() && steps.release.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release delete "$TAG" --yes
+          fi

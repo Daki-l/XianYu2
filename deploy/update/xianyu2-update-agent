@@ -1,0 +1,946 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# 宿主机更新代理。应用容器只创建 request.json；本脚本独占认领、下载、验证和 Compose 操作。
+readonly config_file="${XIANYU2_UPDATE_AGENT_CONFIG:-/etc/xianyu2/update-agent.conf}"
+readonly allowed_asset_hosts='^(api\.github\.com|github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)$'
+readonly release_tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+readonly cosign_identity_prefix='https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/'
+readonly systemd_timeout_seconds=2700
+readonly agent_directory="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly agent_version_file="${XIANYU2_UPDATE_AGENT_VERSION_FILE:-${agent_directory}/agent-version}"
+[[ -r "$agent_version_file" ]] || {
+  echo "Update agent version file is not readable: $agent_version_file" >&2
+  exit 1
+}
+agent_version="$(tr -d '[:space:]' < "$agent_version_file")"
+[[ "$agent_version" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Invalid update agent version: $agent_version" >&2
+  exit 1
+}
+readonly agent_version
+
+task_file=''
+task_id=''
+task_version=''
+downloaded_bytes=0
+total_bytes=0
+initial_install=false
+manual_apply=false
+download_dir=''
+backup_path=''
+backup_sha256=''
+current_stage=''
+stage_started_at=''
+heartbeat_pid=''
+heartbeat_status=''
+task_timeout_pid=''
+task_deadline_epoch=0
+task_started_at=''
+app_recreate_started=false
+HEARTBEAT_INTERVAL_SECONDS=''
+TASK_RECOVERY_TIMEOUT_SECONDS=''
+DOWNLOAD_TIMEOUT_SECONDS=''
+BACKUP_TIMEOUT_SECONDS=''
+TASK_TOTAL_TIMEOUT_SECONDS=''
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing required command: $1" >&2
+    return 1
+  }
+}
+
+assert_root_owned_protected_file() {
+  local path="$1"
+  local label="$2"
+  (( EUID == 0 )) || return 0
+  [[ -f "$path" && ! -L "$path" ]] || {
+    echo "$label must be a regular file: $path" >&2
+    return 1
+  }
+  [[ "$(stat -c '%u' "$path")" == 0 ]] || {
+    echo "$label must be owned by root: $path" >&2
+    return 1
+  }
+  local mode
+  mode=$((8#$(stat -c '%a' "$path")))
+  (( (mode & 8#22) == 0 )) || {
+    echo "$label must not be group- or world-writable: $path" >&2
+    return 1
+  }
+  assert_root_owned_protected_parent_directories "$path" "$label"
+}
+
+assert_root_owned_protected_parent_directories() {
+  local path="$1"
+  local label="$2"
+  (( EUID == 0 )) || return 0
+  local directory
+  directory="$(dirname "$path")"
+  while :; do
+    [[ -d "$directory" && ! -L "$directory" ]] || {
+      echo "$label parent directory must be a real directory: $directory" >&2
+      return 1
+    }
+    [[ "$(stat -c '%u' "$directory")" == 0 ]] || {
+      echo "$label parent directory must be owned by root: $directory" >&2
+      return 1
+    }
+    local mode
+    mode=$((8#$(stat -c '%a' "$directory")))
+    (( (mode & 8#22) == 0 )) || {
+      echo "$label parent directory must not be group- or world-writable: $directory" >&2
+      return 1
+    }
+    [[ "$directory" == '/' ]] && break
+    directory="$(dirname "$directory")"
+  done
+}
+
+load_config() {
+  [[ -r "$config_file" ]] || {
+    echo "Update agent config is not readable: $config_file" >&2
+    return 1
+  }
+  assert_root_owned_protected_file "$config_file" 'Update agent config'
+  # 配置文件只由 root 安装流程写入，避免从应用可写目录加载命令或路径。
+  # shellcheck disable=SC1090
+  source "$config_file"
+  : "${PROJECT_DIR:?PROJECT_DIR is required}"
+  : "${COMPOSE_FILE:?COMPOSE_FILE is required}"
+  : "${ENV_FILE:?ENV_FILE is required}"
+  : "${RELEASE_ENV_FILE:?RELEASE_ENV_FILE is required}"
+  : "${UPDATE_REQUEST_DIR:?UPDATE_REQUEST_DIR is required}"
+  : "${UPDATE_STATUS_DIR:?UPDATE_STATUS_DIR is required}"
+  : "${UPDATE_WORK_DIR:?UPDATE_WORK_DIR is required}"
+  : "${RUNTIME_DIR:?RUNTIME_DIR is required}"
+  : "${APP_UID:?APP_UID is required}"
+  : "${APP_GID:?APP_GID is required}"
+  : "${RELEASE_REPOSITORY:?RELEASE_REPOSITORY is required}"
+  : "${COSIGN_OIDC_ISSUER:?COSIGN_OIDC_ISSUER is required}"
+  BACKUP_HOOK="${BACKUP_HOOK:-}"
+  HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"
+  HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-15}"
+  TASK_RECOVERY_TIMEOUT_SECONDS="${TASK_RECOVERY_TIMEOUT_SECONDS:-300}"
+  DOWNLOAD_TIMEOUT_SECONDS="${DOWNLOAD_TIMEOUT_SECONDS:-1800}"
+  BACKUP_TIMEOUT_SECONDS="${BACKUP_TIMEOUT_SECONDS:-900}"
+  TASK_TOTAL_TIMEOUT_SECONDS="${TASK_TOTAL_TIMEOUT_SECONDS:-2400}"
+  for timeout in "$HEALTH_TIMEOUT_SECONDS" "$HEARTBEAT_INTERVAL_SECONDS" "$TASK_RECOVERY_TIMEOUT_SECONDS" "$DOWNLOAD_TIMEOUT_SECONDS" "$BACKUP_TIMEOUT_SECONDS" "$TASK_TOTAL_TIMEOUT_SECONDS"; do
+    [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || {
+      echo 'Update agent timeout values must be positive integers.' >&2
+      return 1
+    }
+  done
+  (( TASK_TOTAL_TIMEOUT_SECONDS + 30 <= systemd_timeout_seconds )) || {
+    echo 'TASK_TOTAL_TIMEOUT_SECONDS must leave at least 30 seconds before the packaged systemd timeout.' >&2
+    return 1
+  }
+  assert_root_owned_protected_file "$COMPOSE_FILE" 'Compose file'
+  assert_root_owned_protected_file "$ENV_FILE" 'Environment file'
+  if [[ -e "$RELEASE_ENV_FILE" ]]; then
+    assert_root_owned_protected_file "$RELEASE_ENV_FILE" 'Release environment file'
+  else
+    assert_root_owned_protected_parent_directories "$RELEASE_ENV_FILE" 'Release environment file'
+  fi
+  if [[ -n "$BACKUP_HOOK" ]]; then
+    assert_root_owned_protected_file "$BACKUP_HOOK" 'Backup hook'
+  fi
+}
+
+preflight() {
+  require_command curl
+  require_command jq
+  require_command cosign
+  require_command docker
+  require_command flock
+  require_command sha256sum
+  require_command stat
+  require_command timeout
+  assert_root_owned_protected_file "$agent_version_file" 'Update agent version file'
+  case "$(uname -m)" in
+    x86_64|amd64) ;;
+    *) echo "Unsupported host architecture: $(uname -m); only linux/amd64 is supported." >&2; return 1 ;;
+  esac
+  [[ -f "$COMPOSE_FILE" ]] || { echo "Compose file not found: $COMPOSE_FILE" >&2; return 1; }
+  [[ -f "$ENV_FILE" ]] || { echo "Environment file not found: $ENV_FILE" >&2; return 1; }
+  [[ "$APP_UID" =~ ^[0-9]+$ && "$APP_GID" =~ ^[0-9]+$ ]] || {
+    echo 'APP_UID and APP_GID must be numeric.' >&2
+    return 1
+  }
+  install -d -m 0750 -o "$APP_UID" -g "$APP_GID" "$UPDATE_REQUEST_DIR"
+  chown "$APP_UID:$APP_GID" "$UPDATE_REQUEST_DIR"
+  chmod 0750 "$UPDATE_REQUEST_DIR"
+  install -d -m 0755 -o root -g root "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
+  install -d -m 0750 -o root -g root "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+  [[ "$(stat -c '%d' "$UPDATE_REQUEST_DIR")" == "$(stat -c '%d' "$UPDATE_WORK_DIR")" ]] || {
+    echo 'UPDATE_REQUEST_DIR and UPDATE_WORK_DIR must be on the same filesystem.' >&2
+    return 1
+  }
+  touch "$UPDATE_STATUS_DIR/agent.ready"
+  chmod 0644 "$UPDATE_STATUS_DIR/agent.ready"
+}
+
+timestamp() {
+  date --iso-8601=seconds
+}
+
+run_with_timeout() {
+  local seconds="$1"
+  shift
+  seconds="$(remaining_timeout_seconds "$seconds")"
+  timeout --foreground "${seconds}s" "$@"
+}
+
+remaining_timeout_seconds() {
+  local requested="$1"
+  if (( task_deadline_epoch == 0 )); then
+    printf '%s\n' "$requested"
+    return 0
+  fi
+  local remaining=$((task_deadline_epoch - $(date +%s)))
+  (( remaining > 0 )) || {
+    echo 'The update task total timeout has elapsed.' >&2
+    return 124
+  }
+  if (( remaining < requested )); then
+    printf '%s\n' "$remaining"
+  else
+    printf '%s\n' "$requested"
+  fi
+}
+
+stop_task_timeout() {
+  [[ -n "$task_timeout_pid" ]] || return 0
+  if kill -0 "$task_timeout_pid" 2>/dev/null; then
+    kill "$task_timeout_pid" 2>/dev/null || true
+  fi
+  wait "$task_timeout_pid" 2>/dev/null || true
+  task_timeout_pid=''
+}
+
+start_task_timeout() {
+  task_started_at="${task_started_at:-$(timestamp)}"
+  task_deadline_epoch=$(( $(date +%s) + TASK_TOTAL_TIMEOUT_SECONDS ))
+  (
+    sleep "$TASK_TOTAL_TIMEOUT_SECONDS"
+    kill -TERM "$$" 2>/dev/null || true
+  ) &
+  task_timeout_pid=$!
+}
+
+write_json_atomically() {
+  local target="$1"
+  local contents="$2"
+  local temporary="${target}.tmp.$$"
+  printf '%s\n' "$contents" > "$temporary"
+  mv -f "$temporary" "$target"
+}
+
+is_terminal_status() {
+  [[ "$1" == 'SUCCESS' || "$1" == 'FAILED' || "$1" == 'MANUAL_REQUIRED' ]]
+}
+
+is_release_version() {
+  [[ "$1" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+}
+
+is_older_release_version() {
+  local candidate="$1"
+  local current="$2"
+  local candidate_major candidate_minor candidate_patch current_major current_minor current_patch
+  IFS=. read -r candidate_major candidate_minor candidate_patch <<< "$candidate"
+  IFS=. read -r current_major current_minor current_patch <<< "$current"
+  for component in major minor patch; do
+    local candidate_value="candidate_${component}"
+    local current_value="current_${component}"
+    if (( 10#${!candidate_value} < 10#${!current_value} )); then
+      return 0
+    fi
+    if (( 10#${!candidate_value} > 10#${!current_value} )); then
+      return 1
+    fi
+  done
+  return 1
+}
+
+stage_timeout_seconds() {
+  case "$1" in
+    DOWNLOADING|VERIFYING|CHECKING) printf '%s\n' "$DOWNLOAD_TIMEOUT_SECONDS" ;;
+    BACKING_UP) printf '%s\n' "$BACKUP_TIMEOUT_SECONDS" ;;
+    RESTARTING|HEALTH_CHECKING) printf '%s\n' "$HEALTH_TIMEOUT_SECONDS" ;;
+    *) printf '%s\n' "$TASK_RECOVERY_TIMEOUT_SECONDS" ;;
+  esac
+}
+
+stop_heartbeat() {
+  [[ -n "$heartbeat_pid" ]] || return 0
+  if kill -0 "$heartbeat_pid" 2>/dev/null; then
+    kill "$heartbeat_pid" 2>/dev/null || true
+  fi
+  wait "$heartbeat_pid" 2>/dev/null || true
+  heartbeat_pid=''
+  heartbeat_status=''
+}
+
+start_heartbeat() {
+  local status="$1"
+  local progress="$2"
+  local message="$3"
+  local detail="$4"
+  if is_terminal_status "$status"; then
+    stop_heartbeat
+    return 0
+  fi
+  if [[ "$heartbeat_status" == "$status" && -n "$heartbeat_pid" ]] && kill -0 "$heartbeat_pid" 2>/dev/null; then
+    return 0
+  fi
+  stop_heartbeat
+  (
+    while sleep "$HEARTBEAT_INTERVAL_SECONDS"; do
+      AGENT_HEARTBEAT_WRITER=true write_status "$status" "$progress" "$message" "$detail" || true
+    done
+  ) &
+  heartbeat_pid=$!
+  heartbeat_status="$status"
+}
+
+write_status() {
+  local status="$1"
+  local progress="$2"
+  local message="$3"
+  local detail="${4:-}"
+  local payload
+  if [[ -z "$stage_started_at" || "$current_stage" != "$status" ]]; then
+    current_stage="$status"
+    stage_started_at="$(timestamp)"
+  fi
+  payload="$(jq -n \
+    --argjson schemaVersion 1 \
+    --arg taskId "$task_id" \
+    --arg version "$task_version" \
+    --arg status "$status" \
+    --arg message "$message" \
+    --arg detail "$detail" \
+    --arg taskStartedAt "$task_started_at" \
+    --arg stageStartedAt "$stage_started_at" \
+    --arg updatedAt "$(timestamp)" \
+    --argjson timeoutSeconds "$(stage_timeout_seconds "$status")" \
+    --argjson progress "$progress" \
+    --argjson downloadedBytes "$downloaded_bytes" \
+    --argjson totalBytes "$total_bytes" \
+    --arg backupPath "$backup_path" \
+    --arg backupSha256 "$backup_sha256" \
+    '{schemaVersion: $schemaVersion, taskId: $taskId, version: $version, status: $status, progress: $progress,
+       message: $message, detail: $detail, taskStartedAt: $taskStartedAt, stageStartedAt: $stageStartedAt,
+      updatedAt: $updatedAt, timeoutSeconds: $timeoutSeconds,
+      downloadedBytes: $downloadedBytes, totalBytes: $totalBytes}
+      + (if $backupPath == "" then {} else {backup: {path: $backupPath, sha256: $backupSha256}} end)')"
+  write_json_atomically "$UPDATE_STATUS_DIR/status.json" "$payload"
+  if [[ "${AGENT_HEARTBEAT_WRITER:-false}" != 'true' ]]; then
+    start_heartbeat "$status" "$progress" "$message" "$detail"
+  fi
+}
+
+archive_task() {
+  [[ -n "$task_file" && -f "$task_file" ]] || return 0
+  mv -f "$task_file" "$UPDATE_WORK_DIR/archive/${task_id}-$(date +%s).json"
+  task_file=''
+}
+
+fail_task() {
+  local message="$1"
+  local detail="${2:-查看宿主机 xianyu2-update-agent 日志和更新目录中的归档文件。}"
+  write_status FAILED 100 "$message" "$detail" || true
+  archive_task || true
+}
+
+on_error() {
+  local exit_code=$?
+  if [[ -n "$task_id" ]]; then
+    if [[ "$app_recreate_started" == 'true' ]]; then
+      fail_task "更新失败（退出码 ${exit_code}）" \
+        '已尝试启动新应用容器，Flyway 可能已执行。请勿假定已自动回退；请按备份、容器日志和归档文件人工恢复。'
+    else
+      fail_task "更新失败（退出码 ${exit_code}）"
+    fi
+  fi
+  exit "$exit_code"
+}
+
+trap on_error ERR
+
+on_terminate() {
+  if [[ -n "$task_id" ]]; then
+    if [[ "$app_recreate_started" == 'true' ]]; then
+      fail_task '更新任务超过总时限，未继续执行' \
+        '已尝试启动新应用容器，Flyway 可能已执行。请勿假定已自动回退；请按备份、容器日志和归档文件人工恢复。'
+    else
+      fail_task '更新任务超过总时限，未继续执行'
+    fi
+  fi
+  exit 124
+}
+
+trap on_terminate TERM
+
+cleanup_download_dir() {
+  [[ -n "$download_dir" && -d "$download_dir" ]] || return 0
+  rm -rf "$download_dir"
+}
+
+cleanup() {
+  stop_heartbeat
+  stop_task_timeout
+  cleanup_download_dir
+}
+
+trap cleanup EXIT
+
+claim_request() {
+  local request="$UPDATE_REQUEST_DIR/request.json"
+  local claimed="$UPDATE_WORK_DIR/in-progress/.request-claim-$$-${RANDOM}.json"
+  if [[ ! -e "$request" && ! -L "$request" ]]; then
+    return 1
+  fi
+  # 先以 rename 将应用可写目录中的对象移入私有目录，再验证。不能在
+  # request 目录里检查后直接解析，否则应用进程可在两步之间替换文件。
+  mv --no-target-directory -- "$request" "$claimed" || return 1
+  if ! is_safe_request_file "$claimed"; then
+    archive_invalid_request "$claimed"
+    echo 'Refusing an unsafe update request file.' >&2
+    return 1
+  fi
+  local candidate_id
+  local schema_version
+  if ! schema_version="$(jq -r '.schemaVersion // empty' "$claimed")"; then
+    archive_invalid_request "$claimed"
+    echo 'Refusing an invalid update request JSON document.' >&2
+    return 1
+  fi
+  [[ "$schema_version" == '1' ]] || {
+    archive_invalid_request "$claimed"
+    return 1
+  }
+  if ! candidate_id="$(jq -r '.taskId // empty' "$claimed")"; then
+    archive_invalid_request "$claimed"
+    echo 'Refusing an invalid update request JSON document.' >&2
+    return 1
+  fi
+  [[ "$candidate_id" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+    archive_invalid_request "$claimed"
+    return 1
+  }
+  local final_claimed="$UPDATE_WORK_DIR/in-progress/${candidate_id}.json"
+  if [[ -e "$final_claimed" || -L "$final_claimed" ]]; then
+    archive_invalid_request "$claimed"
+    echo 'Refusing a duplicate update task identifier.' >&2
+    return 1
+  fi
+  task_id="$candidate_id"
+  if ! task_version="$(jq -r '.version // empty' "$claimed")"; then
+    archive_invalid_request "$claimed"
+    echo 'Refusing an invalid update request JSON document.' >&2
+    return 1
+  fi
+  task_started_at="$(timestamp)"
+  task_file="$claimed"
+  # 在移走应用可见的 request 前先写代理拥有的活跃状态，避免重复点击产生排队请求。
+  write_status REQUESTED 1 '更新任务已由代理认领'
+  mv --no-target-directory -- "$claimed" "$final_claimed"
+  task_file="$final_claimed"
+  return 0
+}
+
+is_safe_request_file() {
+  local request="$1"
+  [[ -f "$request" && ! -L "$request" ]] || return 1
+  [[ "$(stat -c '%u' "$request")" == "$APP_UID" ]] || return 1
+  [[ "$(stat -c '%g' "$request")" == "$APP_GID" ]] || return 1
+  [[ "$(stat -c '%h' "$request")" == '1' ]] || return 1
+  # request.json is created atomically by the application with owner read/write and
+  # group read only. Anything else is an application-writable protocol violation.
+  [[ "$(stat -c '%a' "$request")" == '640' ]]
+}
+
+archive_invalid_request() {
+  local request="$1"
+  [[ -e "$request" || -L "$request" ]] || return 0
+  mv --no-target-directory -- "$request" \
+    "$UPDATE_WORK_DIR/archive/invalid-request-$(date +%s)-$$-${RANDOM}.json"
+}
+
+recover_unfinished_task() {
+  local unfinished
+  unfinished="$(find "$UPDATE_WORK_DIR/in-progress" -maxdepth 1 -type f -name '*.json' -print -quit 2>/dev/null || true)"
+  [[ -n "$unfinished" ]] || return 0
+  task_file="$unfinished"
+  task_id="$(jq -r '.taskId // "unknown"' "$task_file")"
+  task_version="$(jq -r '.version // ""' "$task_file")"
+  local previous_status previous_task_id previous_task_started_at last_heartbeat timeout_seconds heartbeat_epoch task_started_epoch now age remaining
+  previous_status="$UPDATE_STATUS_DIR/status.json"
+  previous_task_id="$(jq -r '.taskId // empty' "$previous_status" 2>/dev/null || true)"
+  previous_task_started_at="$(jq -r '.taskStartedAt // empty' "$previous_status" 2>/dev/null || true)"
+  last_heartbeat="$(jq -r '.updatedAt // empty' "$previous_status" 2>/dev/null || true)"
+  timeout_seconds="$(jq -r '.timeoutSeconds // empty' "$previous_status" 2>/dev/null || true)"
+  task_started_at=''
+  heartbeat_epoch=''
+  task_started_epoch=''
+  if [[ "$previous_task_id" == "$task_id" && "$timeout_seconds" =~ ^[1-9][0-9]*$ && -n "$last_heartbeat" ]]; then
+    heartbeat_epoch="$(date --date="$last_heartbeat" +%s 2>/dev/null || true)"
+  fi
+  if [[ -n "$previous_task_started_at" ]]; then
+    task_started_epoch="$(date --date="$previous_task_started_at" +%s 2>/dev/null || true)"
+    if [[ "$task_started_epoch" =~ ^[0-9]+$ ]]; then
+      task_started_at="$previous_task_started_at"
+    fi
+  fi
+  [[ -n "$task_started_at" ]] || task_started_at="$(timestamp)"
+  now="$(date +%s)"
+  if [[ "$task_started_epoch" =~ ^[0-9]+$ ]] && (( now - task_started_epoch >= TASK_TOTAL_TIMEOUT_SECONDS )); then
+    write_status FAILED 100 '检测到超过总时限的更新任务，未自动重试' \
+      '代理重启后保留原运行版本，请确认日志后重新提交更新。'
+    archive_task
+    return 0
+  fi
+  if [[ "$heartbeat_epoch" =~ ^[0-9]+$ ]]; then
+    age=$((now - heartbeat_epoch))
+    (( age < 0 )) && age=0
+    if (( age <= timeout_seconds )); then
+      remaining=$((timeout_seconds - age + 1))
+      if [[ "$task_started_epoch" =~ ^[0-9]+$ ]]; then
+        local total_remaining=$((TASK_TOTAL_TIMEOUT_SECONDS - (now - task_started_epoch) + 1))
+        (( total_remaining < remaining )) && remaining="$total_remaining"
+      fi
+      (( remaining > 0 )) || remaining=1
+      # After a host restart no process owns this task any more, but a heartbeat may
+      # still be inside its declared phase window. Keep its durable state until that
+      # deadline instead of exhausting systemd's restart limit in a tight loop.
+      echo "A previous update task still has a valid heartbeat; waiting ${remaining} seconds for its phase timeout." >&2
+      sleep "$remaining"
+    fi
+  fi
+  write_status FAILED 100 "检测到超时或无心跳的更新任务，未自动重试" "代理重启后保留原运行版本，请确认日志后重新提交更新。"
+  archive_task
+}
+
+release_api_for_tag() {
+  local release_tag="$1"
+  printf 'https://api.github.com/repos/Daki-l/XianYu2/releases/tags/%s\n' "$release_tag"
+}
+
+github_api_get() {
+  local url="$1"
+  local destination="$2"
+  local timeout_seconds
+  timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
+  curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 15 --max-time "$timeout_seconds" \
+    --header 'Accept: application/vnd.github+json' --header 'User-Agent: XianYu2-update-agent' \
+    "$url" -o "$destination"
+}
+
+verify_release_commit() {
+  local release_tag="$1"
+  local expected_commit="$2"
+  local ref_json="$download_dir/tag-ref.json"
+  github_api_get "https://api.github.com/repos/Daki-l/XianYu2/git/ref/tags/${release_tag}" "$ref_json"
+
+  local object_type object_sha actual_commit
+  object_type="$(jq -er '.object.type' "$ref_json")"
+  object_sha="$(jq -er '.object.sha' "$ref_json")"
+  case "$object_type" in
+    commit)
+      actual_commit="$object_sha"
+      ;;
+    tag)
+      local tag_json="$download_dir/annotated-tag.json"
+      github_api_get "https://api.github.com/repos/Daki-l/XianYu2/git/tags/${object_sha}" "$tag_json"
+      [[ "$(jq -er '.object.type' "$tag_json")" == 'commit' ]] || {
+        echo 'Annotated release tag does not point to a commit.' >&2
+        return 1
+      }
+      actual_commit="$(jq -er '.object.sha' "$tag_json")"
+      ;;
+    *)
+      echo "Unsupported release tag object type: $object_type" >&2
+      return 1
+      ;;
+  esac
+  [[ "$actual_commit" == "$expected_commit" ]] || {
+    echo 'Release tag commit does not match the signed manifest.' >&2
+    return 1
+  }
+}
+
+download_api_asset() {
+  local asset_id="$1"
+  local destination="$2"
+  local effective_url timeout_seconds
+  timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
+  effective_url="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 \
+    --connect-timeout 15 --max-time "$timeout_seconds" \
+    --header 'Accept: application/octet-stream' \
+    --header 'User-Agent: XianYu2-update-agent' \
+    --output "$destination" --write-out '%{url_effective}' \
+    "https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}")"
+  local host
+  host="$(printf '%s' "$effective_url" | sed -E 's#^https://([^/]+).*$#\1#')"
+  [[ "$host" =~ $allowed_asset_hosts ]] || {
+    rm -f "$destination"
+    echo "Release asset redirected to an untrusted host: $host" >&2
+    return 1
+  }
+}
+
+release_certificate_identity() {
+  local release_tag="$1"
+  printf '%s%s\n' "$cosign_identity_prefix" "$release_tag"
+}
+
+verify_blob() {
+  local artifact="$1"
+  local bundle="$2"
+  local certificate_identity="$3"
+  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-blob \
+    --certificate-identity "$certificate_identity" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
+    --bundle "$bundle" "$artifact" >/dev/null
+}
+
+release_asset_id() {
+  local release_json="$1"
+  local asset_name="$2"
+  jq -er --arg name "$asset_name" '
+    [.assets[] | select(.name == $name and (.id | type == "number")) | .id]
+    | if length == 1 then .[0] else error("asset must appear exactly once") end
+  ' "$release_json"
+}
+
+read_release_env_digest() {
+  [[ -f "$RELEASE_ENV_FILE" ]] || return 1
+  sed -n 's/^APP_IMAGE_DIGEST=//p' "$RELEASE_ENV_FILE" | head -n 1
+}
+
+write_release_env() {
+  local digest="$1"
+  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+    echo "Invalid image digest" >&2
+    return 1
+  }
+  local tmp="${RELEASE_ENV_FILE}.tmp.$$"
+  install -d -m 0750 "$(dirname "$RELEASE_ENV_FILE")"
+  printf 'APP_IMAGE=%s@%s\nAPP_IMAGE_DIGEST=%s\n' "$RELEASE_REPOSITORY" "$digest" "$digest" > "$tmp"
+  chmod 0640 "$tmp"
+  mv -f "$tmp" "$RELEASE_ENV_FILE"
+}
+
+compose() {
+  run_with_timeout "$HEALTH_TIMEOUT_SECONDS" docker compose --project-directory "$PROJECT_DIR" \
+    --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" -f "$COMPOSE_FILE" "$@"
+}
+
+wait_for_health() {
+  local elapsed=0
+  while (( elapsed < HEALTH_TIMEOUT_SECONDS )); do
+    local container health
+    container="$(compose ps -q app)"
+    if [[ -n "$container" ]]; then
+      health="$(run_with_timeout "$HEALTH_TIMEOUT_SECONDS" docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)"
+      if [[ "$health" == 'healthy' ]] \
+        && run_with_timeout "$HEALTH_TIMEOUT_SECONDS" docker exec "$container" wget -q -O /dev/null http://127.0.0.1:12400/actuator/health; then
+        return 0
+      fi
+    fi
+    write_status HEALTH_CHECKING 92 "等待应用健康检查" "已等待 ${elapsed} 秒"
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+  return 1
+}
+
+write_installed_state() {
+  local version="$1"
+  local jar_sha="$2"
+  local fingerprint="$3"
+  local image_digest="$4"
+  local source="$5"
+  local payload
+  payload="$(jq -n \
+    --arg version "$version" \
+    --arg jarSha256 "$jar_sha" \
+    --arg runtimeFingerprint "$fingerprint" \
+    --arg imageDigest "$image_digest" \
+    --arg source "$source" \
+    --arg completedAt "$(timestamp)" \
+    '{schemaVersion: 1, version: $version, jarSha256: $jarSha256,
+      runtimeFingerprint: $runtimeFingerprint, imageDigest: $imageDigest,
+      source: $source, completedAt: $completedAt}')"
+  write_json_atomically "$RUNTIME_DIR/installed.json" "$payload"
+}
+
+backup_if_required() {
+  local manifest="$1"
+  local required
+  jq -e '(.database.requiresBackup // false) | type == "boolean"' "$manifest" >/dev/null
+  required="$(jq -r '.database.requiresBackup // false' "$manifest")"
+  [[ "$required" == 'true' ]] || return 0
+  [[ -n "$BACKUP_HOOK" && -x "$BACKUP_HOOK" ]] || {
+    echo 'This release requires a database backup, but BACKUP_HOOK is unavailable.' >&2
+    return 1
+  }
+  write_status BACKING_UP 55 '正在备份数据库'
+  local backup_output
+  backup_output="$(PROJECT_DIR="$PROJECT_DIR" COMPOSE_FILE="$COMPOSE_FILE" ENV_FILE="$ENV_FILE" \
+    RELEASE_ENV_FILE="$RELEASE_ENV_FILE" run_with_timeout "$BACKUP_TIMEOUT_SECONDS" "$BACKUP_HOOK")"
+  backup_path="$(printf '%s\n' "$backup_output" | tail -n 1)"
+  [[ -n "$backup_path" && -f "$backup_path" && -f "${backup_path}.sha256" ]] || {
+    echo 'Backup hook did not return a verifiable backup file.' >&2
+    return 1
+  }
+  backup_sha256="$(sha256sum "$backup_path" | awk '{print $1}')"
+  [[ "$(awk '{print $1}' "${backup_path}.sha256")" == "$backup_sha256" ]] || {
+    echo 'Backup checksum file does not match the generated backup.' >&2
+    return 1
+  }
+}
+
+restore_release_env_snapshot() {
+  local previous_release_env="$1"
+  local had_previous_release_env="$2"
+  if [[ "$had_previous_release_env" == 'true' ]]; then
+    local restore_release_env="${RELEASE_ENV_FILE}.restore.${task_id}.tmp"
+    cp "$previous_release_env" "$restore_release_env"
+    mv -f "$restore_release_env" "$RELEASE_ENV_FILE"
+  else
+    rm -f "$RELEASE_ENV_FILE"
+  fi
+}
+
+process_task() {
+  start_task_timeout
+  local requested_tag release_json manifest manifest_bundle jar jar_bundle
+  requested_tag="$(jq -r '.releaseTag // empty' "$task_file")"
+  [[ "$requested_tag" =~ $release_tag_pattern ]] || {
+    echo 'Invalid requested release tag.' >&2
+    return 1
+  }
+
+  download_dir="$(mktemp -d "$UPDATE_WORK_DIR/.download.XXXXXX")"
+  release_json="$download_dir/release.json"
+  write_status CHECKING 5 '正在读取正式发行版'
+  github_api_get "$(release_api_for_tag "$requested_tag")" "$release_json"
+  [[ "$(jq -r '.draft or .prerelease' "$release_json")" == 'false' ]] || {
+    echo 'Draft or prerelease cannot be installed.' >&2
+    return 1
+  }
+  [[ "$(jq -r '.tag_name' "$release_json")" == "$requested_tag" ]] || return 1
+
+  manifest="$download_dir/release-manifest.json"
+  manifest_bundle="$download_dir/release-manifest.json.bundle"
+  download_api_asset "$(release_asset_id "$release_json" 'release-manifest.json')" "$manifest"
+  download_api_asset "$(release_asset_id "$release_json" 'release-manifest.json.bundle')" "$manifest_bundle"
+  local certificate_identity
+  certificate_identity="$(release_certificate_identity "$requested_tag")"
+  verify_blob "$manifest" "$manifest_bundle" "$certificate_identity"
+
+  if [[ "$(jq -r '.schemaVersion // empty' "$manifest")" != '1' ]]; then
+    write_status MANUAL_REQUIRED 100 '更新协议版本不受支持' \
+      '请先安装本 Release 中经过验证的 host package 和更新代理，再重新检查更新。'
+    archive_task
+    return 0
+  fi
+
+  local target_version update_type fingerprint image_repo image_digest jar_name jar_sha jar_size host_package_name host_package_sha host_package_size manifest_commit minimum_agent_version
+  target_version="$(jq -er '.version' "$manifest")"
+  update_type="$(jq -er '.updateType' "$manifest")"
+  manifest_commit="$(jq -er '.commitSha' "$manifest")"
+  minimum_agent_version="$(jq -er '.minimumAgentVersion' "$manifest")"
+  fingerprint="$(jq -er '.runtimeFingerprint' "$manifest")"
+  image_repo="$(jq -er '.image.repository' "$manifest")"
+  image_digest="$(jq -er '.image.digest' "$manifest")"
+  jar_name="$(jq -er '.jar.name' "$manifest")"
+  jar_sha="$(jq -er '.jar.sha256' "$manifest")"
+  jar_size="$(jq -er '.jar.size' "$manifest")"
+  host_package_name="$(jq -er '.hostPackage.name' "$manifest")"
+  host_package_sha="$(jq -er '.hostPackage.sha256' "$manifest")"
+  host_package_size="$(jq -er '.hostPackage.size' "$manifest")"
+  [[ "$(jq -r '.releaseTag' "$manifest")" == "$requested_tag" ]] || return 1
+  [[ "$target_version" == "${requested_tag#v}" && "$target_version" == "$task_version" ]] || return 1
+  is_release_version "$target_version" || return 1
+  [[ "$manifest_commit" =~ ^[0-9a-f]{40}$ ]] || return 1
+  verify_release_commit "$requested_tag" "$manifest_commit"
+  [[ "$minimum_agent_version" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$(jq -r '.platform' "$manifest")" == 'linux/amd64' ]] || return 1
+  [[ "$image_repo" == "$RELEASE_REPOSITORY" && "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  [[ "$jar_name" =~ ^[A-Za-z0-9._-]+\.jar$ && "$jar_sha" =~ ^[0-9a-f]{64}$ && "$jar_size" =~ ^[1-9][0-9]*$ ]] || return 1
+  [[ "$host_package_name" =~ ^[A-Za-z0-9._-]+\.tar\.gz$ && "$host_package_sha" =~ ^[0-9a-f]{64}$ && "$host_package_size" =~ ^[1-9][0-9]*$ ]] || return 1
+  release_asset_id "$release_json" "$host_package_name" >/dev/null
+  release_asset_id "$release_json" "${host_package_name}.bundle" >/dev/null
+
+  if [[ "$update_type" == 'host-package-manual-required' && "$manual_apply" != 'true' && "$initial_install" != 'true' ]]; then
+    [[ "$(jq -r '.manual.instructions // .manualInstructions // empty' "$manifest")" != '' ]] || {
+      echo 'Manual-required release is missing manual instructions.' >&2
+      return 1
+    }
+    write_status MANUAL_REQUIRED 100 '此版本需要人工更新宿主机依赖' \
+      "$(jq -r '[(.manual.reason // ""), (.manual.instructions // .manualInstructions // "请查看 Release 说明。")]
+        | map(select(length > 0)) | join(" ")' "$manifest")"
+    archive_task
+    return 0
+  fi
+  (( agent_version >= minimum_agent_version )) || {
+    write_status MANUAL_REQUIRED 100 '更新代理版本过低' \
+      '请先验证并安装本 Release 的 host package 和更新代理，再由宿主机管理员重新执行更新。'
+    archive_task
+    return 0
+  }
+  if [[ "$update_type" == 'host-package-manual-required' ]]; then
+    update_type='image'
+  fi
+  [[ "$update_type" == 'jar' || "$update_type" == 'image' ]] || return 1
+
+  write_status DOWNLOADING 20 '正在下载并验证应用 JAR'
+  jar="$download_dir/$jar_name"
+  jar_bundle="$download_dir/$jar_name.bundle"
+  download_api_asset "$(release_asset_id "$release_json" "$jar_name")" "$jar"
+  download_api_asset "$(release_asset_id "$release_json" "$jar_name.bundle")" "$jar_bundle"
+  downloaded_bytes="$(stat -c '%s' "$jar")"
+  total_bytes="$jar_size"
+  [[ "$downloaded_bytes" == "$jar_size" ]] || return 1
+  write_status VERIFYING 40 '正在验证 JAR 签名和校验和'
+  verify_blob "$jar" "$jar_bundle" "$certificate_identity"
+  [[ "$(sha256sum "$jar" | awk '{print $1}')" == "$jar_sha" ]] || return 1
+  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify --certificate-identity "$certificate_identity" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
+  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-attestation --type slsaprovenance \
+    --certificate-identity "$certificate_identity" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
+
+  local installed current_digest installed_version
+  installed="$RUNTIME_DIR/installed.json"
+  current_digest="$(read_release_env_digest || true)"
+  installed_version="$(jq -r '.version // empty' "$installed" 2>/dev/null || true)"
+  if is_release_version "$installed_version" && is_older_release_version "$target_version" "$installed_version"; then
+    echo "Refusing to downgrade from ${installed_version} to ${target_version}." >&2
+    return 1
+  fi
+  if [[ "$update_type" == 'jar' ]]; then
+    if [[ ! -f "$installed" ]] \
+      || [[ -z "$current_digest" || "$current_digest" != "$(jq -r '.imageDigest // empty' "$installed" 2>/dev/null || true)" ]] \
+      || [[ "$fingerprint" != "$(jq -r '.runtimeFingerprint // empty' "$installed" 2>/dev/null || true)" ]]; then
+      # 运行状态未知时不覆盖 runtime JAR；同一 Release 的不可变镜像是安全的完整恢复路径。
+      write_status INSTALLING 60 '当前安装状态无法确认，改为切换完整镜像基线'
+      update_type='image'
+    fi
+  fi
+
+  if [[ "$update_type" == 'jar' ]]; then
+    backup_if_required "$manifest"
+    write_status INSTALLING 65 '正在原子替换运行时 JAR'
+    local temporary_jar="$RUNTIME_DIR/.app.jar.${task_id}.tmp"
+    if [[ -f "$RUNTIME_DIR/app.jar" ]]; then
+      cp "$RUNTIME_DIR/app.jar" "$RUNTIME_DIR/archive/app-${task_id}.jar"
+    fi
+    cp "$jar" "$temporary_jar"
+    mv -f "$temporary_jar" "$RUNTIME_DIR/app.jar"
+    write_status RESTARTING 80 '正在重建应用容器'
+    app_recreate_started=true
+    compose up -d --no-deps --force-recreate app
+    wait_for_health
+    write_installed_state "$target_version" "$jar_sha" "$fingerprint" "$current_digest" runtime
+  else
+    write_status INSTALLING 65 '正在切换到新的不可变镜像'
+    local previous_release_env="$UPDATE_WORK_DIR/archive/release-env-${task_id}.env"
+    local had_previous_release_env=false
+    if [[ -f "$RELEASE_ENV_FILE" ]]; then
+      cp "$RELEASE_ENV_FILE" "$previous_release_env"
+      had_previous_release_env=true
+    fi
+    write_status DOWNLOADING 75 '正在拉取新的不可变镜像'
+    # 先以 digest 拉取候选镜像，确认可用后才修改生产 Compose 的受管输入。
+    run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker pull "${image_repo}@${image_digest}"
+    if ! write_release_env "$image_digest"; then
+      restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
+      echo 'Unable to switch release.env; restored the previous release input.' >&2
+      return 1
+    fi
+    if [[ "$initial_install" == 'true' ]] && compose config --services | grep -Fxq mysql; then
+      if ! compose up -d --wait mysql; then
+        restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
+        echo 'Unable to start the initial MySQL service; restored the previous release input.' >&2
+        return 1
+      fi
+    fi
+    if ! backup_if_required "$manifest"; then
+      restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
+      echo 'Database backup failed; restored the previous release input before starting the app container.' >&2
+      return 1
+    fi
+    if ! run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker compose --project-directory "$PROJECT_DIR" \
+      --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" -f "$COMPOSE_FILE" pull app; then
+      restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
+      echo 'Image pull failed; restored the previous release.env without replacing the runtime JAR.' >&2
+      return 1
+    fi
+    if [[ -f "$RUNTIME_DIR/app.jar" ]]; then
+      mv -f "$RUNTIME_DIR/app.jar" "$RUNTIME_DIR/archive/app-${task_id}.jar"
+    fi
+    write_status RESTARTING 80 '正在重建应用容器'
+    app_recreate_started=true
+    compose up -d --no-deps --force-recreate app
+    wait_for_health
+    write_installed_state "$target_version" "$jar_sha" "$fingerprint" "$image_digest" baseline
+  fi
+
+  write_status SUCCESS 100 '更新完成'
+  archive_task
+}
+
+create_manual_task() {
+  local requested_tag="$1"
+  [[ "$requested_tag" =~ $release_tag_pattern ]] || {
+    echo "Invalid release tag: $requested_tag" >&2
+    return 64
+  }
+  task_id="$(cat /proc/sys/kernel/random/uuid)"
+  task_version="${requested_tag#v}"
+  task_started_at="$(timestamp)"
+  task_file="$UPDATE_WORK_DIR/in-progress/${task_id}.json"
+  jq -n --arg taskId "$task_id" --arg version "$task_version" --arg releaseTag "$requested_tag" \
+    --arg requestedAt "$(timestamp)" \
+    '{schemaVersion: 1, taskId: $taskId, version: $version, releaseTag: $releaseTag, requestedAt: $requestedAt, manualApply: true}' \
+    > "$task_file"
+}
+
+main() {
+  load_config
+  preflight
+  if [[ "${1:-}" == '--check' ]]; then
+    exit 0
+  fi
+  if [[ "${1:-}" == '--initial-install' ]]; then
+    initial_install=true
+  elif [[ "${1:-}" == '--apply-manual-release' && $# -eq 2 ]]; then
+    manual_apply=true
+  elif [[ $# -gt 0 ]]; then
+    echo "Unsupported argument: $1" >&2
+    exit 64
+  fi
+
+  exec 9>"$UPDATE_WORK_DIR/agent.lock"
+  flock -n 9 || exit 0
+  local recovery_exit=0
+  recover_unfinished_task || recovery_exit=$?
+  if (( recovery_exit != 0 )); then
+    exit "$recovery_exit"
+  fi
+  if [[ "$manual_apply" == 'true' ]]; then
+    create_manual_task "$2"
+    process_task
+    exit 0
+  fi
+  claim_request || exit 0
+  process_task
+}
+
+main "$@"
