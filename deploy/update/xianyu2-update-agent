@@ -936,6 +936,9 @@ main() {
       exit 64
       ;;
   esac
+  if [[ -n "$manual_tag" ]]; then
+    echo "Received manually confirmed release command for $manual_tag." >&2
+  fi
 
   exec 9>"$UPDATE_WORK_DIR/agent.lock"
   flock -n 9 || exit 0
