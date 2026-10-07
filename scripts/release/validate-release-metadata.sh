@@ -45,7 +45,15 @@ jq -e '(.hostContractRequired | type) == "boolean"' "$metadata" >/dev/null || {
   exit 1
 }
 host_contract_required="$(jq -r '.hostContractRequired' "$metadata")"
-minimum_agent_version="$(jq -er 'if (.minimumAgentVersion | type) == "number" and .minimumAgentVersion >= 1 and .minimumAgentVersion == floor then .minimumAgentVersion else error("minimumAgentVersion must be a positive integer") end' "$metadata")"
+minimum_agent_version="$(jq -er '
+  .minimumAgentVersion as $minimum_agent_version
+  | if ($minimum_agent_version | type) == "number"
+      and $minimum_agent_version >= 1
+      and $minimum_agent_version == ($minimum_agent_version | floor)
+    then $minimum_agent_version
+    else error("minimumAgentVersion must be a positive integer")
+    end
+' "$metadata")"
 if [[ -n "$agent_version_file" ]]; then
   package_agent_version="$(tr -d '[:space:]' < "$agent_version_file")"
 else
