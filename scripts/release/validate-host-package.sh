@@ -42,7 +42,10 @@ while IFS= read -r entry; do
   [[ "$entry" == "${prefix}"* ]] || fail "unexpected path: $entry"
   relative="${entry#"$prefix"}"
   [[ -n "$relative" ]] || continue
-  case "/${relative}/" in
+  # tar 为目录保留末尾 /；安全检查中先去掉这一处合法分隔符，避免把 deploy/
+  # 误判为重复斜杠，同时仍拒绝 deploy// 之类的异常路径。
+  normalized_relative="${relative%/}"
+  case "/${normalized_relative}/" in
     *'/../'*|*'//'*) fail "unsafe path: $entry" ;;
   esac
   case "$relative" in
