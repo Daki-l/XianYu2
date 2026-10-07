@@ -202,7 +202,7 @@ sed -i 's|^ARG JRE_BASE_IMAGE=.*|ARG JRE_BASE_IMAGE=eclipse-temurin:21-jre-noble
 git -C "$fixture" add .
 git -C "$fixture" commit -qm 'runtime-only Dockerfile change'
 runtime_only_commit="$(git -C "$fixture" rev-parse HEAD)"
-runtime_only_contract_changes="$(cd "$fixture" && bash "$repository_root/scripts/release/detect-host-contract-change.sh" --from v2.0.7 --to "$runtime_only_commit")"
+runtime_only_contract_changes="$(cd "$fixture" && bash "$repository_root/scripts/release/detect-host-contract-change.sh" --from "$invalid_commit" --to "$runtime_only_commit")"
 [[ -z "$runtime_only_contract_changes" ]] || {
   echo "Runtime-only Dockerfile change unexpectedly requires a host package: $runtime_only_contract_changes" >&2
   exit 1
