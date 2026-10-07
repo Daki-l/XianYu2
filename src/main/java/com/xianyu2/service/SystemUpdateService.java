@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyu2.controller.dto.VersionInfoRespDTO;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.info.BuildProperties;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,7 @@ public class SystemUpdateService {
     private final Path statusDirectory;
     private final boolean updateEnabled;
 
+    @Autowired
     public SystemUpdateService(ObjectMapper objectMapper,
                                ObjectProvider<BuildProperties> buildPropertiesProvider,
                                @Value("${app.version:}") String configuredVersion,
