@@ -2046,46 +2046,6 @@ async function saveMenuLayout() {
           </div>
         </div>
 
-        <!-- 更新教程 -->
-        <div class="settings__section">
-          <div class="settings__section-title">更新教程</div>
-          <p class="settings__desc">更新前先完成 MySQL 备份，再重新构建服务。</p>
-
-          <div class="settings__tutorial">
-            <div class="settings__tutorial-step">
-              <div class="settings__step-number">1</div>
-              <div class="settings__step-content">
-                <div class="settings__step-title">拉取当前仓库更新</div>
-                <div class="settings__code-block">
-                  <code>git pull --ff-only</code>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings__tutorial-step">
-              <div class="settings__step-number">2</div>
-              <div class="settings__step-content">
-                <div class="settings__step-title">重新构建并启动</div>
-                <div class="settings__code-block">
-                  <code>docker compose up -d --build</code>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings__warning-box">
-            <div class="settings__warning-icon">⚠️</div>
-            <div class="settings__warning-content">
-              <strong>重要提示：</strong>
-              <ul>
-                <li>更新前使用 <code>mysqldump</code> 备份数据库</li>
-                <li>不要删除 Compose 创建的 <code>mysql-data</code> 卷</li>
-                <li>数据库结构由 Flyway 在启动时校验和升级</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-
       </div>
     </div>
   </div>

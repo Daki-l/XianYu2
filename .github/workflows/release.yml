@@ -314,10 +314,42 @@ jobs:
           test "$(jq -r '.tag_name' "$release_json")" = "$TAG"
           test "$(jq -r '.draft or .prerelease' "$release_json")" = false
           download_asset() {
-            local name="$1"
-            local url
-            url="$(jq -er --arg name "$name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0].browser_download_url else error("asset count") end' "$release_json")"
-            curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 "$url" -o "$name"
+            local name="$1" asset_id url headers body status location hop
+            asset_id="$(jq -er --arg name "$name" '[.assets[] | select(.name == $name and (.id | type) == "number") | .id] | if length == 1 then .[0] else error("asset count") end' "$release_json")"
+            url="https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}"
+            for ((hop = 0; hop <= 3; hop++)); do
+              case "$url" in
+                https://api.github.com/*|https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
+                *) echo "Release asset redirect uses an untrusted URL: $url" >&2; return 1 ;;
+              esac
+              headers="${name}.headers.$$"
+              body="${name}.body.$$"
+              rm -f "$headers" "$body"
+              if ! status="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+                -H 'Accept: application/octet-stream' \
+                --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url")"; then
+                rm -f "$headers" "$body"
+                return 1
+              fi
+              if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+                mv -f "$body" "$name"
+                rm -f "$headers"
+                return 0
+              fi
+              if [[ "$status" =~ ^3[0-9][0-9]$ ]]; then
+                location="$(awk 'BEGIN { IGNORECASE = 1 }
+                  { sub(/\r$/, "") }
+                  tolower($1) == "location:" { sub(/^[^:]*:[[:space:]]*/, ""); value = $0 }
+                  END { print value }' "$headers")"
+                rm -f "$headers" "$body"
+                [[ -n "$location" ]] || return 1
+                url="$location"
+                continue
+              fi
+              rm -f "$headers" "$body"
+              return 1
+            done
+            return 1
           }
           download_asset "xianyu2-v${TAG#v}.jar"
           download_asset "xianyu2-v${TAG#v}.jar.bundle"

@@ -218,16 +218,42 @@ release_asset_id() {
 }
 
 download_asset() {
-  local name="$1" asset_id effective_url
+  local name="$1" asset_id url headers body status location hop
   asset_id="$(release_asset_id "$name")"
-  effective_url="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 \
-    -H 'Accept: application/octet-stream' -H 'User-Agent: XianYu2-bootstrap' \
-    --output "$name" --write-out '%{url_effective}' \
-    "https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}")"
-  case "$effective_url" in
-    https://api.github.com/*|https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
-    *) rm -f "$name"; return 1 ;;
-  esac
+  url="https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}"
+  for ((hop = 0; hop <= 3; hop++)); do
+    case "$url" in
+      https://api.github.com/*|https://github.com/*|https://objects.githubusercontent.com/*|https://release-assets.githubusercontent.com/*) ;;
+      *) echo "Release asset redirect uses an untrusted URL: $url" >&2; return 1 ;;
+    esac
+    headers="${name}.headers.$$"
+    body="${name}.body.$$"
+    rm -f "$headers" "$body"
+    if ! status="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+      -H 'Accept: application/octet-stream' -H 'User-Agent: XianYu2-bootstrap' \
+      --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url")"; then
+      rm -f "$headers" "$body"
+      return 1
+    fi
+    if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+      mv -f "$body" "$name"
+      rm -f "$headers"
+      return 0
+    fi
+    if [[ "$status" =~ ^3[0-9][0-9]$ ]]; then
+      location="$(awk 'BEGIN { IGNORECASE = 1 }
+        { sub(/\r$/, "") }
+        tolower($1) == "location:" { sub(/^[^:]*:[[:space:]]*/, ""); value = $0 }
+        END { print value }' "$headers")"
+      rm -f "$headers" "$body"
+      [[ -n "$location" ]] || return 1
+      url="$location"
+      continue
+    fi
+    rm -f "$headers" "$body"
+    return 1
+  done
+  return 1
 }
 download_asset release-manifest.json
 download_asset release-manifest.json.bundle

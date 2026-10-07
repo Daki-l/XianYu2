@@ -582,21 +582,65 @@ verify_release_commit() {
 download_api_asset() {
   local asset_id="$1"
   local destination="$2"
-  local effective_url timeout_seconds
-  timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
-  effective_url="$(curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 \
-    --connect-timeout 15 --max-time "$timeout_seconds" \
-    --header 'Accept: application/octet-stream' \
-    --header 'User-Agent: XianYu2-update-agent' \
-    --output "$destination" --write-out '%{url_effective}' \
-    "https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}")"
-  local host
-  host="$(printf '%s' "$effective_url" | sed -E 's#^https://([^/]+).*$#\1#')"
-  [[ "$host" =~ $allowed_asset_hosts ]] || {
-    rm -f "$destination"
-    echo "Release asset redirected to an untrusted host: $host" >&2
+  [[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || {
+    echo "Invalid release asset id: $asset_id" >&2
     return 1
   }
+
+  # curl --location would contact each redirect target before we could inspect
+  # it. Resolve each hop ourselves so an untrusted Release redirect never gets
+  # a request from the privileged host agent.
+  local url="https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}"
+  local headers body status location host timeout_seconds hop
+  for ((hop = 0; hop <= 3; hop++)); do
+    host="$(printf '%s' "$url" | sed -E 's#^https://([^/]+).*$#\1#')"
+    [[ "$url" =~ ^https:// && "$host" =~ $allowed_asset_hosts ]] || {
+      echo "Release asset redirect uses an untrusted URL: $url" >&2
+      return 1
+    }
+
+    headers="${destination}.headers.$$"
+    body="${destination}.body.$$"
+    rm -f "$headers" "$body"
+    timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
+    if ! status="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+      --connect-timeout 15 --max-time "$timeout_seconds" \
+      --header 'Accept: application/octet-stream' \
+      --header 'User-Agent: XianYu2-update-agent' \
+      --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url")"; then
+      rm -f "$headers" "$body"
+      return 1
+    fi
+
+    if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+      mv -f "$body" "$destination"
+      rm -f "$headers"
+      return 0
+    fi
+    if [[ "$status" =~ ^3[0-9][0-9]$ ]]; then
+      location="$(awk 'BEGIN { IGNORECASE = 1 }
+        { sub(/\r$/, "") }
+        tolower($1) == "location:" {
+          sub(/^[^:]*:[[:space:]]*/, "")
+          value = $0
+        }
+        END { print value }' "$headers")"
+      rm -f "$headers" "$body"
+      [[ -n "$location" ]] || {
+        echo 'Release asset redirect is missing a Location header.' >&2
+        return 1
+      }
+      url="$location"
+      continue
+    fi
+
+    rm -f "$headers" "$body"
+    echo "Unexpected HTTP status while downloading release asset: $status" >&2
+    return 1
+  done
+
+  echo 'Release asset exceeded the redirect limit.' >&2
+  return 1
 }
 
 release_certificate_identity() {

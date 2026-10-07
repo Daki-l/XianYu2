@@ -18,6 +18,44 @@ validate_release_tag() {
   }
 }
 
+require_protected_config() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || {
+    echo "Update agent config must be a regular file: $path" >&2
+    return 1
+  }
+  [[ "$(stat -c '%u' "$path")" == 0 ]] || {
+    echo "Update agent config must be owned by root: $path" >&2
+    return 1
+  }
+  local mode
+  mode=$((8#$(stat -c '%a' "$path")))
+  (( (mode & 8#22) == 0 )) || {
+    echo "Update agent config must not be group- or world-writable: $path" >&2
+    return 1
+  }
+
+  local directory
+  directory="$(dirname "$path")"
+  while :; do
+    [[ -d "$directory" && ! -L "$directory" ]] || {
+      echo "Update agent config parent must be a real directory: $directory" >&2
+      return 1
+    }
+    [[ "$(stat -c '%u' "$directory")" == 0 ]] || {
+      echo "Update agent config parent must be owned by root: $directory" >&2
+      return 1
+    }
+    mode=$((8#$(stat -c '%a' "$directory")))
+    (( (mode & 8#22) == 0 )) || {
+      echo "Update agent config parent must not be group- or world-writable: $directory" >&2
+      return 1
+    }
+    [[ "$directory" == '/' ]] && break
+    directory="$(dirname "$directory")"
+  done
+}
+
 create_initial_request() {
   local release_tag="$1"
   : "${UPDATE_REQUEST_DIR:?UPDATE_REQUEST_DIR is required}"
@@ -54,6 +92,7 @@ main() {
     echo 'Install and configure xianyu2-update-agent first.' >&2
     return 1
   }
+  require_protected_config "$config_file"
 
   # shellcheck disable=SC1090
   source "$config_file"
