@@ -168,11 +168,15 @@ preflight() {
     echo 'APP_UID and APP_GID must be numeric.' >&2
     return 1
   }
-  install -d -m 0750 -o "$APP_UID" -g "$APP_GID" "$UPDATE_REQUEST_DIR"
-  chown "$APP_UID:$APP_GID" "$UPDATE_REQUEST_DIR"
-  chmod 0750 "$UPDATE_REQUEST_DIR"
-  install -d -m 0755 -o root -g root "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
-  install -d -m 0750 -o root -g root "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+  if (( EUID == 0 )); then
+    install -d -m 0750 -o "$APP_UID" -g "$APP_GID" "$UPDATE_REQUEST_DIR"
+    install -d -m 0755 -o root -g root "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
+    install -d -m 0750 -o root -g root "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+  else
+    # 单元测试以非 root 身份运行；正式安装器和 systemd unit 均强制 root。
+    install -d -m 0750 "$UPDATE_REQUEST_DIR" "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+    install -d -m 0755 "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
+  fi
   [[ "$(stat -c '%d' "$UPDATE_REQUEST_DIR")" == "$(stat -c '%d' "$UPDATE_WORK_DIR")" ]] || {
     echo 'UPDATE_REQUEST_DIR and UPDATE_WORK_DIR must be on the same filesystem.' >&2
     return 1

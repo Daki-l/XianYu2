@@ -57,7 +57,7 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          base_sha="$BASE_SHA"
+          base_sha="${BASE_SHA:-}"
           if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
             base_sha="$(git rev-parse "${HEAD_SHA}^")"
           fi
@@ -76,7 +76,7 @@ jobs:
           cache: maven
       - name: Run Maven tests
         run: |
-          ./mvnw -B -Drevision=0.0.0-dev+${GITHUB_SHA::12} test
+          ./mvnw -B "-Drevision=0.0.0-dev+${GITHUB_SHA::12}" test
           bash deploy/update/test-update-agent.sh
           bash scripts/release/test-release-packaging.sh
 
@@ -98,7 +98,7 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
         run: |
           set -Eeuo pipefail
-          base_sha="$BASE_SHA"
+          base_sha="${BASE_SHA:-}"
           if [[ -z "$base_sha" || "$base_sha" =~ ^0+$ ]]; then
             base_sha="$(git rev-parse "${HEAD_SHA}^")"
           fi
