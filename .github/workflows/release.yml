@@ -241,6 +241,8 @@ jobs:
           bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
           bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST"
           bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST" deploy/server/compose-existing-mysql.yaml
+          bash scripts/ci/test-runtime-jar-selection.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
+            "${{ steps.runtime.outputs.fingerprint }}" "$DIGEST"
           bash scripts/release/verify-release-artifacts.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
             "${{ steps.release.outputs.version }}" "${{ steps.runtime.outputs.fingerprint }}"
 
