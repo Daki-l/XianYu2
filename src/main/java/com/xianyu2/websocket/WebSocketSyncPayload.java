@@ -17,6 +17,8 @@ import java.util.Map;
  */
 public final class WebSocketSyncPayload {
 
+    private static final int MAX_NESTING_DEPTH = 8;
+
     private WebSocketSyncPayload() {
     }
 
@@ -25,61 +27,90 @@ public final class WebSocketSyncPayload {
         if (messageData == null) {
             return Map.of();
         }
-        Map<String, Object> body = toMap(objectMapper, messageData.get("body"));
-        if (body.isEmpty()) {
-            body = toMap(objectMapper, messageData.get("decryptedBody"));
-        }
-        if (body.isEmpty()) {
-            return Map.of();
-        }
-
-        Map<String, Object> syncPackage = toMap(objectMapper, body.get("syncPushPackage"));
-        if (hasDataList(syncPackage)) {
-            return syncPackage;
-        }
-        return hasDataList(body) ? body : Map.of();
+        Map<String, Object> syncPackage = findSyncPushPackage(
+                objectMapper, messageData.get("body"), 0);
+        return syncPackage.isEmpty()
+                ? findSyncPushPackage(objectMapper, messageData.get("decryptedBody"), 0)
+                : syncPackage;
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> toMap(ObjectMapper objectMapper, Object value) {
-        if (value instanceof Map<?, ?> source) {
-            Map<String, Object> result = new LinkedHashMap<>();
-            source.forEach((key, child) -> result.put(String.valueOf(key), child));
-            return result;
+    private static Map<String, Object> findSyncPushPackage(
+            ObjectMapper objectMapper, Object value, int depth) {
+        if (value == null || depth > MAX_NESTING_DEPTH) {
+            return Map.of();
         }
-        if (value instanceof List<?> values) {
-            for (Object item : values) {
-                Map<String, Object> map = toMap(objectMapper, item);
-                if (!map.isEmpty()) {
-                    return map;
+        Object normalized = normalize(objectMapper, value);
+        if (normalized instanceof Map<?, ?> source) {
+            Map<String, Object> map = new LinkedHashMap<>();
+            source.forEach((key, child) -> map.put(String.valueOf(key), child));
+
+            Map<String, Object> namedPackage = findSyncPushPackage(
+                    objectMapper, map.get("syncPushPackage"), depth + 1);
+            if (!namedPackage.isEmpty()) {
+                return namedPackage;
+            }
+            if (hasDataList(map)) {
+                return map;
+            }
+            for (Object child : map.values()) {
+                Map<String, Object> nested = findSyncPushPackage(objectMapper, child, depth + 1);
+                if (!nested.isEmpty()) {
+                    return nested;
                 }
             }
             return Map.of();
         }
-        if (!(value instanceof String text) || text.isBlank()) {
-            return Map.of();
+        if (normalized instanceof List<?> values) {
+            for (Object item : values) {
+                Map<String, Object> nested = findSyncPushPackage(objectMapper, item, depth + 1);
+                if (!nested.isEmpty()) {
+                    return nested;
+                }
+            }
         }
-
-        Map<String, Object> jsonMap = readJsonMap(objectMapper, text);
-        if (!jsonMap.isEmpty()) {
-            return jsonMap;
-        }
-        String decoded = MessageDecryptUtils.tryDecrypt(text);
-        if (decoded.equals(text)) {
-            return Map.of();
-        }
-        return readJsonMap(objectMapper, decoded);
+        return Map.of();
     }
 
-    private static Map<String, Object> readJsonMap(ObjectMapper objectMapper, String value) {
-        try {
-            return objectMapper.readValue(value, new TypeReference<LinkedHashMap<String, Object>>() { });
-        } catch (Exception ignored) {
-            return Map.of();
+    private static Object normalize(ObjectMapper objectMapper, Object value) {
+        if (value instanceof Map<?, ?> source) {
+            return source;
         }
+        if (value instanceof List<?>) {
+            return value;
+        }
+        if (!(value instanceof String text) || text.isBlank()) {
+            return null;
+        }
+
+        Object jsonValue = readJsonValue(objectMapper, text);
+        if (jsonValue != null) {
+            return jsonValue;
+        }
+        if (!looksLikeBase64(text)) {
+            return null;
+        }
+        String decoded = MessageDecryptUtils.tryDecrypt(text);
+        return decoded.equals(text) ? null : readJsonValue(objectMapper, decoded);
+    }
+
+    private static Object readJsonValue(ObjectMapper objectMapper, String value) {
+        try {
+            Object parsed = objectMapper.readValue(value, new TypeReference<Object>() { });
+            return parsed instanceof Map<?, ?> || parsed instanceof List<?> ? parsed : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static boolean looksLikeBase64(String value) {
+        return value.length() >= 8 && value.matches("[A-Za-z0-9+/]+={0,2}");
     }
 
     private static boolean hasDataList(Map<String, Object> candidate) {
-        return candidate.get("data") instanceof List<?>;
+        if (!(candidate.get("data") instanceof List<?> dataItems)) {
+            return false;
+        }
+        return dataItems.stream().anyMatch(item -> item instanceof Map<?, ?> map
+                && map.containsKey("data"));
     }
 }

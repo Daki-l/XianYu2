@@ -58,17 +58,14 @@ public class SyncMessageHandler extends AbstractLwpHandler {
             
             Map<String, Object> syncPushPackage = WebSocketSyncPayload.extractSyncPushPackage(
                     objectMapper, messageData);
-            if (syncPushPackage.isEmpty()) {
-                log.debug("【账号{}】同步包不含可处理数据: bodyType={}", accountId,
-                        messageData.get("body") == null ? "null"
-                                : messageData.get("body").getClass().getSimpleName());
-                return null;
-            }
-            
-            // 获取data列表
+            // Startup and acknowledgement frames can share this lwp but have no messages.
+            // Treat them as a normal empty sync frame instead of a parse failure.
             List<Object> dataList = getList(syncPushPackage, "data");
             if (dataList == null || dataList.isEmpty()) {
-                return null;
+                log.debug("【账号{}】同步帧不含消息数据: bodyType={}", accountId,
+                        messageData.get("body") == null ? "null"
+                                : messageData.get("body").getClass().getSimpleName());
+                dataList = List.of();
             }
             
             params.setDataList(dataList);
@@ -90,7 +87,9 @@ public class SyncMessageHandler extends AbstractLwpHandler {
         // 获取lwp字段
         String lwp = getString(messageData, "lwp");
         
-        log.info("【账号{}】收到闲鱼原始消息: lwp={}, messageCount={}", accountId, lwp, syncParams.getMessageCount());
+        if (syncParams.getMessageCount() > 0) {
+            log.info("【账号{}】收到闲鱼原始消息: lwp={}, messageCount={}", accountId, lwp, syncParams.getMessageCount());
+        }
         
         // 处理每条加密消息
         for (int i = 0; i < syncParams.getDataList().size(); i++) {
