@@ -348,14 +348,13 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
                             String.valueOf(accountId),
                             null, null, null, null);
                 } else {
-                    log.error("【账号{}】❌ Cookie刷新失败，需要手动更新", accountId);
-                    markAccountAsCookieRefreshAbnormal(accountId, "hasLogin和浏览器兜底刷新均失败，需要手动处理Cookie");
+                    log.error("【账号{}】❌ Cookie刷新失败，需要重试或手动检查Cookie", accountId);
 
                     // 记录操作日志
                     operationLogService.log(accountId,
                             OperationConstants.Type.REFRESH,
                             OperationConstants.Module.COOKIE,
-                            "Cookie刷新失败，需要手动更新，账号已标记为异常待处理",
+                            "Cookie刷新失败，需要重试或手动检查Cookie",
                             OperationConstants.Status.FAIL,
                             OperationConstants.TargetType.COOKIE,
                             String.valueOf(accountId),
@@ -366,7 +365,6 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
 
             } catch (Exception e) {
                 log.error("【账号{}】刷新Cookie失败", accountId, e);
-                markAccountAsCookieRefreshAbnormal(accountId, "刷新Cookie异常: " + e.getMessage());
 
                 // 记录操作日志
                 operationLogService.log(accountId,
@@ -399,11 +397,10 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
         );
         if (cookie == null || cookie.getCookieText() == null || cookie.getCookieText().isBlank()) {
             log.warn("【账号{}】浏览器兜底刷新失败，未找到可用Cookie", accountId);
-            markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新失败：未找到可用Cookie");
             operationLogService.log(accountId,
                     OperationConstants.Type.REFRESH,
                     OperationConstants.Module.COOKIE,
-                    "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
+                    "浏览器兜底刷新Cookie失败，未找到可用Cookie",
                     OperationConstants.Status.FAIL,
                     OperationConstants.TargetType.COOKIE,
                     String.valueOf(accountId),
@@ -414,11 +411,10 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
         Map<String, String> existingCookies = XianyuSignUtils.parseCookies(cookie.getCookieText());
         if (existingCookies.isEmpty()) {
             log.warn("【账号{}】浏览器兜底刷新失败，Cookie内容为空", accountId);
-            markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新失败：Cookie内容为空");
             operationLogService.log(accountId,
                     OperationConstants.Type.REFRESH,
                     OperationConstants.Module.COOKIE,
-                    "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
+                    "浏览器兜底刷新Cookie失败，Cookie内容为空",
                     OperationConstants.Status.FAIL,
                     OperationConstants.TargetType.COOKIE,
                     String.valueOf(accountId),
@@ -456,11 +452,10 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
             String refreshedCookieText = buildCookieText(refreshedCookies);
             if (refreshedCookieText.isBlank()) {
                 log.warn("【账号{}】浏览器兜底刷新未获取到新的Cookie", accountId);
-                markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新失败：浏览器未返回Cookie");
                 operationLogService.log(accountId,
                         OperationConstants.Type.REFRESH,
                         OperationConstants.Module.COOKIE,
-                        "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
+                        "浏览器兜底刷新Cookie失败，浏览器未返回Cookie",
                         OperationConstants.Status.FAIL,
                         OperationConstants.TargetType.COOKIE,
                         String.valueOf(accountId),
@@ -491,66 +486,15 @@ public class CookieRefreshServiceImpl implements CookieRefreshService {
             return true;
         } catch (Exception e) {
             log.error("【账号{}】浏览器兜底刷新Cookie失败", accountId, e);
-            markAccountAsCookieRefreshAbnormal(accountId, "浏览器兜底刷新异常: " + e.getMessage());
             operationLogService.log(accountId,
                     OperationConstants.Type.REFRESH,
                     OperationConstants.Module.COOKIE,
-                    "浏览器兜底刷新Cookie失败，账号已标记为异常待处理",
+                    "浏览器兜底刷新Cookie异常",
                     OperationConstants.Status.FAIL,
                     OperationConstants.TargetType.COOKIE,
                     String.valueOf(accountId),
                     null, null, e.getMessage(), null);
             return false;
-        }
-    }
-
-    private void markAccountAsCookieRefreshAbnormal(Long accountId, String reason) {
-        try {
-            XianyuAccount account = accountMapper.selectById(accountId);
-            if (account == null) {
-                operationLogService.log(accountId,
-                        OperationConstants.Type.UPDATE,
-                        OperationConstants.Module.ACCOUNT,
-                        "Cookie刷新失败后更新账号状态失败",
-                        OperationConstants.Status.FAIL,
-                        OperationConstants.TargetType.ACCOUNT,
-                        String.valueOf(accountId),
-                        null, null, "账号不存在，原因: " + reason, null);
-                return;
-            }
-            if (Objects.equals(account.getStatus(), -2)) {
-                operationLogService.log(accountId,
-                        OperationConstants.Type.UPDATE,
-                        OperationConstants.Module.ACCOUNT,
-                        "Cookie刷新失败，账号已处于异常待处理状态",
-                        OperationConstants.Status.PARTIAL,
-                        OperationConstants.TargetType.ACCOUNT,
-                        String.valueOf(accountId),
-                        null, null, reason, null);
-                return;
-            }
-
-            account.setStatus(-2);
-            accountMapper.updateById(account);
-            log.warn("【账号{}】浏览器兜底刷新失败后，账号状态已更新为-2（异常待处理）", accountId);
-            operationLogService.log(accountId,
-                    OperationConstants.Type.UPDATE,
-                    OperationConstants.Module.ACCOUNT,
-                    "Cookie刷新失败，账号状态已标记为异常待处理(-2)",
-                    OperationConstants.Status.SUCCESS,
-                    OperationConstants.TargetType.ACCOUNT,
-                    String.valueOf(accountId),
-                    null, null, reason, null);
-        } catch (Exception e) {
-            log.error("【账号{}】Cookie刷新失败后更新账号状态异常", accountId, e);
-            operationLogService.log(accountId,
-                    OperationConstants.Type.UPDATE,
-                    OperationConstants.Module.ACCOUNT,
-                    "Cookie刷新失败后更新账号状态异常",
-                    OperationConstants.Status.FAIL,
-                    OperationConstants.TargetType.ACCOUNT,
-                    String.valueOf(accountId),
-                    null, null, e.getMessage(), null);
         }
     }
 
