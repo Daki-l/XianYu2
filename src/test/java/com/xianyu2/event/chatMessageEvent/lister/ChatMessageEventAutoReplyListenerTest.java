@@ -46,7 +46,7 @@ class ChatMessageEventAutoReplyListenerTest {
         ReflectionTestUtils.setField(listener, "autoReplyService", autoReplyService);
         ReflectionTestUtils.setField(listener, "takeoverManager", takeoverManager);
         ReflectionTestUtils.setField(listener, "buyerProfileService", buyerProfileService);
-        ReflectionTestUtils.setField(listener, "maxMessageAgeSeconds", 120L);
+        ReflectionTestUtils.setField(listener, "maxMessageAgeSeconds", 300L);
 
         when(accountService.getXianyuUserId(1L)).thenReturn("seller");
         when(takeoverManager.isTakenOver(1L, "session@goofish")).thenReturn(false);
@@ -64,11 +64,20 @@ class ChatMessageEventAutoReplyListenerTest {
 
     @Test
     void skipsDelayTaskForExpiredBuyerMessage() {
-        ChatMessageData message = buyerMessage(System.currentTimeMillis() - 121_000L);
+        ChatMessageData message = buyerMessage(System.currentTimeMillis() - 301_000L);
 
         listener.handleChatMessageReceived(event(message));
 
         verify(autoReplyDelayService, never()).submitDelayTask(message);
+    }
+
+    @Test
+    void submitsDelayTaskForAHistoryMessageDelayedByTwoMinutes() {
+        ChatMessageData message = buyerMessage(System.currentTimeMillis() - 127_000L);
+
+        listener.handleChatMessageReceived(event(message));
+
+        verify(autoReplyDelayService).submitDelayTask(message);
     }
 
     @Test

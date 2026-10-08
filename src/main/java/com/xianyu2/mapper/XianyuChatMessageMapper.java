@@ -58,6 +58,25 @@ public interface XianyuChatMessageMapper {
             "message_time = IF(message_source = 'PLATFORM', VALUES(message_time), message_time)")
     @Options(useGeneratedKeys = true, keyProperty = "id")
     int upsertPlatformHistory(XianyuChatMessage message);
+
+    /**
+     * 仅在平台历史消息尚未落库时插入。返回 1 表示该消息是本次同步首次发现，
+     * 调用方可据此决定是否发布后续业务事件。
+     */
+    @Insert("INSERT IGNORE INTO xianyu_chat_message (" +
+            "xianyu_account_id, lwp, pnm_id, s_id, " +
+            "content_type, msg_content, " +
+            "sender_user_name, sender_user_id, sender_app_v, sender_os_type, " +
+            "reminder_url, xy_goods_id, complete_msg, message_time, message_source, dedupe_fingerprint, reply_origin" +
+            ") VALUES (" +
+            "#{xianyuAccountId}, #{lwp}, #{pnmId}, #{sId}, " +
+            "#{contentType}, #{msgContent}, " +
+            "#{senderUserName}, #{senderUserId}, #{senderAppV}, #{senderOsType}, " +
+            "#{reminderUrl}, #{xyGoodsId}, #{completeMsg}, #{messageTime}, " +
+            "COALESCE(#{messageSource}, 'PLATFORM'), #{dedupeFingerprint}, #{replyOrigin}" +
+            ")")
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insertPlatformHistoryIfAbsent(XianyuChatMessage message);
     
     /**
      * 根据pnm_id查询（防止重复）
@@ -181,6 +200,14 @@ public interface XianyuChatMessageMapper {
             "LIMIT #{limit} OFFSET #{offset}")
     List<XianyuChatMessage> findRecentBySId(@Param("accountId") Long accountId, @Param("sId") String sId,
                                             @Param("limit") int limit, @Param("offset") int offset);
+
+    @Select("SELECT s_id FROM xianyu_chat_message " +
+            "WHERE xianyu_account_id = #{accountId} AND s_id IS NOT NULL AND s_id <> '' " +
+            "AND message_time >= #{sinceMessageTime} " +
+            "GROUP BY s_id ORDER BY MAX(message_time) DESC LIMIT #{limit}")
+    List<String> findRecentSessionIds(@Param("accountId") Long accountId,
+                                      @Param("sinceMessageTime") long sinceMessageTime,
+                                      @Param("limit") int limit);
 
     @Select("<script>" +
             "SELECT * FROM xianyu_chat_message " +

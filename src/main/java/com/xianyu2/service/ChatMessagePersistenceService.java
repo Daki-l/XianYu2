@@ -45,11 +45,16 @@ public class ChatMessagePersistenceService {
 
     /**
      * 同步平台完整历史时，以平台消息的事件时间和原始载荷纠正已存在记录。
+     *
+     * @return 1 表示本次首次插入，0 表示记录已存在且仅完成回填。
      */
     @Transactional
     public int savePlatformHistory(XianyuChatMessage message, String ownUserId) {
         prepareMetadata(message);
-        int result = messageMapper.upsertPlatformHistory(message);
+        int result = messageMapper.insertPlatformHistoryIfAbsent(message);
+        if (result == 0) {
+            messageMapper.upsertPlatformHistory(message);
+        }
         reconcileCrossSourceDuplicate(message, ownUserId);
         return result;
     }

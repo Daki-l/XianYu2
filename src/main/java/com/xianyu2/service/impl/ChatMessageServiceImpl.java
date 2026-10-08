@@ -11,6 +11,8 @@ import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.controller.dto.MsgListReqDTO;
 import com.xianyu2.controller.dto.MsgListRespDTO;
+import com.xianyu2.event.chatMessageEvent.ChatMessageData;
+import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.service.ChatMessageService;
 import com.xianyu2.service.ChatMessagePersistenceService;
 import com.xianyu2.service.PlatformHistoryMessageParser;
@@ -18,6 +20,8 @@ import com.xianyu2.service.WebSocketService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.BeanUtils;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -57,6 +61,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private ApplicationEventPublisher eventPublisher;
     
     @Override
     public List<XianyuChatMessage> getMessagesByAccountId(Long accountId, int page, int pageSize) {
@@ -199,13 +206,25 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                 reqDTO.getXianyuAccountId(), reqDTO.getSid(), maxMessages);
         List<XianyuChatMessage> messages = new PlatformHistoryMessageParser(objectMapper).parse(
                 reqDTO.getXianyuAccountId(), reqDTO.getSid(), history);
-        int saved = 0;
+        int inserted = 0;
         String ownUserId = account.getUnb();
         for (XianyuChatMessage message : messages) {
-            chatMessagePersistenceService.savePlatformHistory(message, ownUserId);
-            saved++;
+            if (chatMessagePersistenceService.savePlatformHistory(message, ownUserId) == 1) {
+                publishHistoryMessageReceivedEvent(message);
+                inserted++;
+            }
         }
-        return ResultObject.success(java.util.Map.of("received", history.size(), "saved", saved));
+        log.info("【账号{}】会话历史同步完成: sid={}, received={}, parsed={}, newlyInserted={}",
+                reqDTO.getXianyuAccountId(), reqDTO.getSid(), history.size(), messages.size(), inserted);
+        return ResultObject.success(java.util.Map.of("received", history.size(), "saved", inserted));
+    }
+
+    private void publishHistoryMessageReceivedEvent(XianyuChatMessage message) {
+        ChatMessageData messageData = new ChatMessageData();
+        BeanUtils.copyProperties(message, messageData);
+        eventPublisher.publishEvent(new ChatMessageReceivedEvent(this, messageData));
+        log.info("【账号{}】历史消息首次入库并发布接收事件: pnmId={}, sid={}",
+                message.getXianyuAccountId(), message.getPnmId(), message.getSId());
     }
 
     private MsgDTO toMessageDto(XianyuChatMessage message) {

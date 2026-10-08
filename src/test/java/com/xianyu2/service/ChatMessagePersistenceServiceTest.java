@@ -74,12 +74,29 @@ class ChatMessagePersistenceServiceTest {
                 .thenReturn(List.of(local));
 
         XianyuChatMessage platform = message(null, 1, "own-user", 2_000L);
-        persistenceService.savePlatformHistory(platform, "own-user");
+        int result = persistenceService.savePlatformHistory(platform, "own-user");
 
+        verify(messageMapper).insertPlatformHistoryIfAbsent(platform);
         verify(messageMapper).upsertPlatformHistory(platform);
         verify(messageMapper, never()).insert(platform);
         verify(messageMapper).markDuplicate(200L, 100L);
         verify(messageMapper).markReplyOrigin(100L, "AI");
+        assertEquals(0, result);
+    }
+
+    @Test
+    void newPlatformHistoryMessageIsReportedAsNewWithoutAnUpsert() {
+        XianyuChatMessage platform = message(null, 1, "buyer-user", 2_000L);
+        when(messageMapper.insertPlatformHistoryIfAbsent(platform)).thenAnswer(invocation -> {
+            platform.setId(101L);
+            return 1;
+        });
+
+        int result = persistenceService.savePlatformHistory(platform, "own-user");
+
+        assertEquals(1, result);
+        verify(messageMapper).insertPlatformHistoryIfAbsent(platform);
+        verify(messageMapper, never()).upsertPlatformHistory(platform);
     }
 
     @Test

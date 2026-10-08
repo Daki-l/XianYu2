@@ -164,7 +164,9 @@ jobs:
         id: jre-base
         run: |
           set -Eeuo pipefail
-          jre_image='eclipse-temurin:21-jre-jammy'
+          # Runtime changes must be deliberate. This is the verified Java base used by v2.0.11;
+          # changing it intentionally produces an image update through the runtime fingerprint.
+          jre_image='eclipse-temurin@sha256:f04fb34e053148344e83317976114ec3f37e4b830ec8bdab5a2fe3cecd7d010b'
           docker pull "$jre_image"
           jre_digest_ref="$(docker image inspect --format '{{index .RepoDigests 0}}' "$jre_image")"
           [[ "$jre_digest_ref" =~ ^(eclipse-temurin|docker\.io/library/eclipse-temurin)@sha256:[0-9a-f]{64}$ ]]

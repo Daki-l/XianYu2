@@ -57,7 +57,7 @@ public class ChatMessageEventAutoReplyListener {
     @Autowired
     private BuyerProfileService buyerProfileService;
 
-    @Value("${app.auto-reply.max-message-age-seconds:120}")
+    @Value("${app.auto-reply.max-message-age-seconds:300}")
     private long maxMessageAgeSeconds;
     
     /**

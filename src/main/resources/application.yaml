@@ -21,7 +21,15 @@ app:
     lease-seconds: ${DELIVERY_LEASE_SECONDS:120}
     max-attempts: ${DELIVERY_MAX_ATTEMPTS:3}
   auto-reply:
-    max-message-age-seconds: ${AUTO_REPLY_MAX_MESSAGE_AGE_SECONDS:120}
+    max-message-age-seconds: ${AUTO_REPLY_MAX_MESSAGE_AGE_SECONDS:300}
+  message-history-recovery:
+    enabled: ${MESSAGE_HISTORY_RECOVERY_ENABLED:true}
+    interval-ms: ${MESSAGE_HISTORY_RECOVERY_INTERVAL_MS:180000}
+    account-cooldown-ms: ${MESSAGE_HISTORY_RECOVERY_ACCOUNT_COOLDOWN_MS:180000}
+    session-cooldown-ms: ${MESSAGE_HISTORY_RECOVERY_SESSION_COOLDOWN_MS:900000}
+    lookback-ms: ${MESSAGE_HISTORY_RECOVERY_LOOKBACK_MS:1800000}
+    max-sessions-per-account: ${MESSAGE_HISTORY_RECOVERY_MAX_SESSIONS_PER_ACCOUNT:3}
+    messages-per-session: ${MESSAGE_HISTORY_RECOVERY_MESSAGES_PER_SESSION:50}
   risk-guard:
     state-file: ${RISK_GUARD_STATE_FILE:data/platform-risk-guard.json}
     cooldown-minutes: ${RISK_GUARD_COOLDOWN_MINUTES:30}

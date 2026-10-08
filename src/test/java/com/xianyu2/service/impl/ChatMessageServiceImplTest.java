@@ -5,6 +5,7 @@ import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuChatMessage;
+import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuChatMessageMapper;
 import com.xianyu2.mapper.XianyuGoodsAutoReplyRecordMapper;
@@ -16,6 +17,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
@@ -26,6 +28,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -42,6 +45,8 @@ class ChatMessageServiceImplTest {
     private XianyuAccountMapper accountMapper;
     @Mock
     private WebSocketService webSocketService;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     private ChatMessageServiceImpl service;
 
@@ -54,6 +59,7 @@ class ChatMessageServiceImplTest {
         ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
         ReflectionTestUtils.setField(service, "webSocketService", webSocketService);
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
+        ReflectionTestUtils.setField(service, "eventPublisher", eventPublisher);
         XianyuAccount account = new XianyuAccount();
         account.setUnb("own-user");
         when(accountMapper.selectById(1L)).thenReturn(account);
@@ -80,10 +86,11 @@ class ChatMessageServiceImplTest {
     }
 
     @Test
-    void historySyncUsesTheDedicatedUpsertWithThePlatformTimestamp() {
+    void historySyncPublishesAnEventForANewPlatformMessage() {
         long createAt = 1_788_953_954_750L;
         when(webSocketService.listConversationHistory(1L, "sid@goofish", 500))
                 .thenReturn(List.of(historyMessage(createAt)));
+        when(persistenceService.savePlatformHistory(org.mockito.ArgumentMatchers.any(), eq("own-user"))).thenReturn(1);
 
         MsgContextReqDTO request = new MsgContextReqDTO();
         request.setXianyuAccountId(1L);
@@ -97,6 +104,27 @@ class ChatMessageServiceImplTest {
         verify(persistenceService).savePlatformHistory(captured.capture(), eq("own-user"));
         assertEquals("history-message-1", captured.getValue().getPnmId());
         assertEquals(createAt, captured.getValue().getMessageTime());
+        org.mockito.ArgumentCaptor<ChatMessageReceivedEvent> event =
+                org.mockito.ArgumentCaptor.forClass(ChatMessageReceivedEvent.class);
+        verify(eventPublisher).publishEvent(event.capture());
+        assertEquals("history-message-1", event.getValue().getMessageData().getPnmId());
+        assertEquals(createAt, event.getValue().getMessageData().getMessageTime());
+    }
+
+    @Test
+    void historySyncDoesNotRepublishAnExistingPlatformMessage() {
+        when(webSocketService.listConversationHistory(1L, "sid@goofish", 500))
+                .thenReturn(List.of(historyMessage(1_788_953_954_750L)));
+        when(persistenceService.savePlatformHistory(org.mockito.ArgumentMatchers.any(), eq("own-user"))).thenReturn(0);
+
+        MsgContextReqDTO request = new MsgContextReqDTO();
+        request.setXianyuAccountId(1L);
+        request.setSid("sid@goofish");
+        request.setMaxMessages(500);
+
+        service.syncContextMessages(request);
+
+        verify(eventPublisher, never()).publishEvent(org.mockito.ArgumentMatchers.any());
     }
 
     private XianyuChatMessage message(Long id, Long messageTime) {
