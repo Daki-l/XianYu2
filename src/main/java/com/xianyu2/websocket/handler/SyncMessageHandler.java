@@ -8,6 +8,7 @@ import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.service.GoodsInfoService;
 import com.xianyu2.entity.XianyuGoodsInfo;
 import com.xianyu2.utils.MessageDecryptUtils;
+import com.xianyu2.websocket.WebSocketSyncPayload;
 import org.springframework.beans.BeanUtils;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -55,15 +56,12 @@ public class SyncMessageHandler extends AbstractLwpHandler {
         try {
             SyncMessageParams params = new SyncMessageParams();
             
-            // 获取body
-            Map<String, Object> body = getMap(messageData, "body");
-            if (body == null) {
-                return null;
-            }
-            
-            // 获取syncPushPackage
-            Map<String, Object> syncPushPackage = getMap(body, "syncPushPackage");
-            if (syncPushPackage == null) {
+            Map<String, Object> syncPushPackage = WebSocketSyncPayload.extractSyncPushPackage(
+                    objectMapper, messageData);
+            if (syncPushPackage.isEmpty()) {
+                log.debug("【账号{}】同步包不含可处理数据: bodyType={}", accountId,
+                        messageData.get("body") == null ? "null"
+                                : messageData.get("body").getClass().getSimpleName());
                 return null;
             }
             

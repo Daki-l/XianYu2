@@ -233,49 +233,6 @@ public class XianyuWebSocketClient extends WebSocketClient {
                     log.debug("【账号{}】收到消息: lwp={}", accountId, lwpType);
                 }
                 
-                // 检查消息类型和解密（参考Python的handle_message）
-                Object lwp = messageData.get("lwp");
-                
-                // 处理同步包消息 /s/para 和 /s/sync（用户消息）
-                if (("/s/para".equals(lwp) || "/s/sync".equals(lwp)) && messageData.containsKey("body")) {
-                    try {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> body = (Map<String, Object>) messageData.get("body");
-                        
-                        if (body != null && body.containsKey("syncPushPackage")) {
-                            @SuppressWarnings("unchecked")
-                            Map<String, Object> syncPushPackage = (Map<String, Object>) body.get("syncPushPackage");
-                            
-                            if (syncPushPackage != null && syncPushPackage.containsKey("data")) {
-                                @SuppressWarnings("unchecked")
-                                java.util.List<Object> dataList = (java.util.List<Object>) syncPushPackage.get("data");
-                                
-                                if (dataList != null && !dataList.isEmpty()) {
-                                    // 处理所有 data 项（可能有多条消息）
-                                    for (int i = 0; i < dataList.size(); i++) {
-                                        @SuppressWarnings("unchecked")
-                                        Map<String, Object> syncData = (Map<String, Object>) dataList.get(i);
-                                        
-                                        if (syncData != null && syncData.containsKey("data")) {
-                                            String encryptedData = syncData.get("data").toString();
-                                            
-                                            // 解密数据
-                                            String decryptedData = com.xianyu2.utils.MessageDecryptUtils.decrypt(encryptedData);
-                                            
-                                            if (decryptedData != null) {
-                                                // 将解密后的数据放回
-                                                syncData.put("decryptedData", decryptedData);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.warn("【账号{}】解密同步包消息失败: {}", accountId, e.getMessage());
-                    }
-                }
-                
                 // 通用body解密（兼容其他消息类型）
                 if (messageData.containsKey("body")) {
                     Object body = messageData.get("body");
@@ -366,16 +323,13 @@ public class XianyuWebSocketClient extends WebSocketClient {
         if (onSyncCursorAdvanced == null || messageData == null) {
             return;
         }
-        Object bodyObject = messageData.get("body");
-        if (!(bodyObject instanceof Map<?, ?> body)) {
-            return;
-        }
-        Object packageObject = body.get("syncPushPackage");
-        if (!(packageObject instanceof Map<?, ?>)) {
+        Map<String, Object> syncPackage = WebSocketSyncPayload.extractSyncPushPackage(
+                objectMapper, messageData);
+        if (syncPackage.isEmpty()) {
             return;
         }
         WebSocketSyncCursor cursor = WebSocketSyncCursor.fromSyncPackage(
-                (Map<String, Object>) packageObject, null);
+                syncPackage, null);
         if (cursor != null) {
             onSyncCursorAdvanced.accept(cursor);
         }
