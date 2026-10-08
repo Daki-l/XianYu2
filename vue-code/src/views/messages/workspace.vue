@@ -45,6 +45,7 @@ const refreshing = ref(false)
 const quickReplies = ref<string[]>([])
 const messagesRef = ref<HTMLElement>()
 const now = ref(Date.now())
+const MESSAGE_REFRESH_INTERVAL_MS = 10_000
 
 const normalizeImageUrl = (value?: string) => {
   if (!value) return ''
@@ -270,21 +271,27 @@ watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) =
 
 let timer: ReturnType<typeof setInterval> | undefined
 let countdownTimer: ReturnType<typeof setInterval> | undefined
+const refreshWhenVisible = () => {
+  if (document.visibilityState === 'visible') void refresh()
+}
 onMounted(async () => {
   await loadAccounts()
   timer = setInterval(() => {
+    if (document.visibilityState !== 'visible') return
     if (hasActiveAutoReply.value) {
       void loadConversationContext(false, false)
       return
     }
     void refresh()
-  }, 2000)
+  }, MESSAGE_REFRESH_INTERVAL_MS)
+  document.addEventListener('visibilitychange', refreshWhenVisible)
   countdownTimer = setInterval(() => { now.value = Date.now() }, 1000)
 })
 
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
   if (countdownTimer) clearInterval(countdownTimer)
+  document.removeEventListener('visibilitychange', refreshWhenVisible)
 })
 </script>
 

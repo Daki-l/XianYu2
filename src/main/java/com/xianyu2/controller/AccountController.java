@@ -15,6 +15,7 @@ import com.xianyu2.controller.dto.UpdateAccountReqDTO;
 import com.xianyu2.controller.dto.UpdateAccountRespDTO;
 import com.xianyu2.service.AccountService;
 import com.xianyu2.service.OperationLogService;
+import com.xianyu2.service.WebSocketService;
 import com.xianyu2.constants.OperationConstants;
 import com.xianyu2.utils.XianyuSignUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,9 @@ public class AccountController {
 
     @Autowired
     private OperationLogService operationLogService;
+
+    @Autowired
+    private WebSocketService webSocketService;
 
     /**
      * 获取账号列表
@@ -195,6 +199,9 @@ public class AccountController {
                 return ResultObject.failed("账号不存在");
             }
             
+            // 先终止该账号的运行时连接和后台任务，避免已删除账号继续接收消息或重连。
+            webSocketService.removeAccount(id);
+
             // 删除账号关联的所有数据
             accountService.deleteAccountAndRelatedData(id);
             
@@ -202,6 +209,10 @@ public class AccountController {
             respDTO.setMessage("删除成功");
             return ResultObject.success(respDTO);
         } catch (Exception e) {
+            // 删除事务回滚时账号仍然存在，恢复先前停止的连接，避免账号被意外留在离线状态。
+            if (reqDTO.getAccountId() != null && accountMapper.selectById(reqDTO.getAccountId()) != null) {
+                webSocketService.startWebSocket(reqDTO.getAccountId());
+            }
             log.error("删除账号失败", e);
             return ResultObject.failed("删除账号失败: " + e.getMessage());
         }

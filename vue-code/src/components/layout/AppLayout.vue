@@ -3,7 +3,7 @@ import { ref, shallowRef, onMounted, onUnmounted, computed, provide, markRaw, wa
 import { RouterView, useRoute } from 'vue-router'
 import NavMenu from './NavMenu.vue'
 import UpdateDialog from './UpdateDialog.vue'
-import { checkUpdate, getCurrentUser, getVersion } from '@/api/system'
+import { checkUpdate, getCachedServerVersion, getCurrentUser, refreshServerVersion } from '@/api/system'
 import { hasPermission } from '@/utils/permission'
 
 // 导入所有页面图标
@@ -22,7 +22,7 @@ const route = useRoute()
 
 declare const __APP_VERSION__: string
 
-const currentVersion = ref(__APP_VERSION__ || '0.0.0-dev')
+const currentVersion = ref(getCachedServerVersion() || __APP_VERSION__ || '0.0.0-dev')
 const hasNewVersion = ref(false)
 const isAdmin = ref(false)
 const updateDialog = ref<InstanceType<typeof UpdateDialog> | null>(null)
@@ -45,15 +45,21 @@ const openUpdateDialog = () => {
   updateDialog.value?.open()
 }
 
-const recoverAfterRestart = async () => {
+const refreshVersion = async () => {
   try {
-    const response = await getVersion()
-    if (response.data && response.data !== currentVersion.value) {
+    const version = await refreshServerVersion()
+    if (version && version !== currentVersion.value) {
+      currentVersion.value = version
       window.location.reload()
     }
   } catch {
-    // 服务重启时短暂不可访问，下一次探测继续尝试。
+    // 保留当前显示的版本号，避免一次手动刷新失败影响页面使用。
   }
+}
+
+const recoverAfterRestart = async () => {
+  if (document.visibilityState !== 'visible') return
+  await refreshVersion()
 }
 
 // 响应式设备类型
@@ -172,7 +178,8 @@ onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
   loadVersion()
-  recoveryTimer = window.setInterval(() => void recoverAfterRestart(), 10000)
+  void recoverAfterRestart()
+  recoveryTimer = window.setInterval(() => void recoverAfterRestart(), 10_000)
 })
 
 onUnmounted(() => {
@@ -225,10 +232,10 @@ onUnmounted(() => {
               <div class="logo-icon">X</div>
               <div class="logo-text-wrap">
                 <div class="logo-text">XianYu2</div>
-                <div class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }">
+                <button class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }" type="button" title="刷新版本号" @click.stop="refreshVersion">
                   v{{ currentVersion }}
                   <span v-if="isAdmin && hasNewVersion" class="update-dot"></span>
-                </div>
+                </button>
               </div>
             </div>
             <button class="drawer-close-btn" @click="closeDrawer">
@@ -249,10 +256,10 @@ onUnmounted(() => {
           <div class="logo-icon">X</div>
           <div class="logo-text-wrap">
             <div class="logo-text">XianYu2</div>
-            <div class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }">
+            <button class="version-tag" :class="{ 'has-update': isAdmin && hasNewVersion }" type="button" title="刷新版本号" @click.stop="refreshVersion">
               v{{ currentVersion }}
               <span v-if="isAdmin && hasNewVersion" class="update-dot"></span>
-            </div>
+            </button>
           </div>
         </div>
         <NavMenu />
@@ -396,12 +403,17 @@ onUnmounted(() => {
 }
 
 .version-tag {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
   font-size: 11px;
   color: var(--apple-text2);
   position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  cursor: pointer;
 }
 
 .version-tag.has-update {

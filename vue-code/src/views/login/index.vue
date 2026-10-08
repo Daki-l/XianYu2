@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
 import { checkUserExists, login, register } from '@/api/auth'
+import { refreshServerVersion } from '@/api/system'
 import { setAuthToken, isLoggedIn } from '@/utils/request'
 import { evaluateRegistrationPassword } from '@/utils/registration-password'
 
@@ -34,6 +35,15 @@ const switchMode = (targetMode: 'login' | 'register') => {
   confirmPassword.value = ''
 }
 
+const enterApplication = async () => {
+  try {
+    await refreshServerVersion()
+  } catch {
+    // 版本读取失败不应阻止用户登录。
+  }
+  window.location.href = '/dashboard'
+}
+
 onMounted(async () => {
   // 已登录则跳转首页
   if (isLoggedIn()) {
@@ -62,7 +72,7 @@ async function handleLogin() {
     const res = await login({ username: username.value.trim(), password: password.value })
     if (res.code === 200 && res.data && res.data.token) {
       setAuthToken(res.data.token, res.data.username)
-      window.location.href = '/dashboard'
+      await enterApplication()
     } else {
       console.error('[Login] login response invalid:', res)
     }
@@ -84,7 +94,7 @@ async function handleRegister() {
     })
     if (res.code === 200 && res.data && res.data.token) {
       setAuthToken(res.data.token, res.data.username)
-      window.location.href = '/dashboard'
+      await enterApplication()
     } else {
       console.error('[Login] register response invalid:', res)
     }

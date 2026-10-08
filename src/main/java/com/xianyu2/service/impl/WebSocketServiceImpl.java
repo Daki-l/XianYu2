@@ -157,7 +157,16 @@ public class WebSocketServiceImpl implements WebSocketService {
     }
 
     private boolean startWebSocketInternal(Long accountId) {
+        if (manuallyStoppedAccounts.contains(accountId)) {
+            log.info("【账号{}】连接已被手动停止，跳过启动", accountId);
+            return false;
+        }
         synchronized (connectionLocks.computeIfAbsent(accountId, key -> new Object())) {
+            // 停止标记可能在进入锁前由删除或停止流程写入，必须在锁内复核。
+            if (manuallyStoppedAccounts.contains(accountId)) {
+                log.info("【账号{}】连接已被手动停止，跳过启动", accountId);
+                return false;
+            }
             return startWebSocketLocked(accountId);
         }
     }
@@ -344,7 +353,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                     
                     // 重新启动连接（会自动刷新Token）
                     log.info("【账号{}】重新启动WebSocket连接（自动刷新Token）", accountId);
-                    boolean success = startWebSocket(accountId);
+                    boolean success = ensureConnected(accountId);
                     
                     if (success) {
                         log.info("【账号{}】✅ Token失效后自动重连成功", accountId);
@@ -459,6 +468,23 @@ public class WebSocketServiceImpl implements WebSocketService {
     @Override
     public boolean stopWebSocket(Long accountId) {
         return stopWebSocketInternal(accountId, true);
+    }
+
+    @Override
+    public void removeAccount(Long accountId) {
+        if (accountId == null) {
+            return;
+        }
+
+        Object connectionLock = connectionLocks.computeIfAbsent(accountId, key -> new Object());
+        synchronized (connectionLock) {
+            // 先标记为停止，确保正在执行的重连或 Token 刷新任务不会重新建立连接。
+            manuallyStoppedAccounts.add(accountId);
+            stopWebSocketInternal(accountId, true);
+            reconnectAttemptCounts.remove(accountId);
+            lastDisconnectNotifyTimes.remove(accountId);
+            log.info("账号运行时连接资源已清理: accountId={}", accountId);
+        }
     }
 
     private boolean stopWebSocketInternal(Long accountId, boolean manualStop) {
@@ -702,6 +728,10 @@ public class WebSocketServiceImpl implements WebSocketService {
      * 4. Token刷新失败时，在token_retry_interval后重试
      */
     private void refreshTokenAndReconnect(Long accountId) {
+        if (manuallyStoppedAccounts.contains(accountId)) {
+            log.info("【账号{}】连接已被手动停止，跳过Token刷新重连", accountId);
+            return;
+        }
         try {
             log.info("【账号{}】开始刷新Token并重连...", accountId);
             
@@ -733,7 +763,7 @@ public class WebSocketServiceImpl implements WebSocketService {
             tokenService.clearToken(accountId);
             
             // 重新启动连接（会自动获取新Token）
-            boolean success = startWebSocket(accountId);
+            boolean success = ensureConnected(accountId);
             
             if (success) {
                 // 更新Token刷新时间
@@ -802,6 +832,10 @@ public class WebSocketServiceImpl implements WebSocketService {
      * @param isManualRestart 是否主动重启（Token刷新等）
      */
     private void scheduleReconnect(Long accountId, int delaySeconds, boolean isManualRestart) {
+        if (manuallyStoppedAccounts.contains(accountId)) {
+            log.info("【账号{}】连接已被手动停止，取消重连计划", accountId);
+            return;
+        }
         // 取消已有的重连任务（防止重复）
         Future<?> existingTask = reconnectTasks.get(accountId);
         if (existingTask != null && !existingTask.isDone()) {
@@ -829,6 +863,11 @@ public class WebSocketServiceImpl implements WebSocketService {
                 () -> runWithAccountTenant(accountId, () -> {
             try {
                 reconnectTasks.remove(accountId);
+
+                if (manuallyStoppedAccounts.contains(accountId)) {
+                    log.info("【账号{}】连接已被手动停止，跳过重连", accountId);
+                    return;
+                }
                 
                 // 停止当前连接和心跳
                 stopWebSocketInternal(accountId, false);
@@ -854,7 +893,7 @@ public class WebSocketServiceImpl implements WebSocketService {
                 }
                 
                 // 重新启动连接
-                boolean success = startWebSocket(accountId);
+                boolean success = ensureConnected(accountId);
                 
                 if (success) {
                     // 重连成功，重置计数

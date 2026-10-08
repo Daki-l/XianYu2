@@ -33,6 +33,8 @@ export interface SystemUpdateStatus {
   detail?: string
 }
 
+const SERVER_VERSION_STORAGE_KEY = 'xianyu2-server-version'
+
 /** 获取当前用户信息 */
 export function getCurrentUser() {
   return request<CurrentUser>({
@@ -56,6 +58,21 @@ export function getVersion() {
     url: '/system/version',
     method: 'get'
   })
+}
+
+/** 登录后或用户主动操作时读取服务端版本，并在当前浏览器会话中缓存。 */
+export async function refreshServerVersion() {
+  const response = await getVersion()
+  const version = response.data?.trim()
+  if (response.code === 200 && version) {
+    window.sessionStorage.setItem(SERVER_VERSION_STORAGE_KEY, version)
+    return version
+  }
+  return null
+}
+
+export function getCachedServerVersion() {
+  return window.sessionStorage.getItem(SERVER_VERSION_STORAGE_KEY)
 }
 
 /** 检查更新 */

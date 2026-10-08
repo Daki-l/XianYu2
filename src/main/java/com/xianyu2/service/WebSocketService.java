@@ -39,6 +39,13 @@ public interface WebSocketService {
     boolean stopWebSocket(Long accountId);
 
     /**
+     * 删除账号前永久停止其运行时连接和所有后台任务。
+     *
+     * <p>与普通手动停止不同，账号删除后不能再被重连或 Token 刷新任务重新拉起。</p>
+     */
+    void removeAccount(Long accountId);
+
+    /**
      * 凭证更新后立即重建WebSocket连接
      *
      * @param accountId 账号ID
