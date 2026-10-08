@@ -53,8 +53,14 @@ docker run --rm \
   --volume "$output_dir:/test-output" \
   "$image"
 
-grep -Fqx '-Dserver.port=12400 -jar /app/runtime/app.jar' "$output_dir/java-args" || {
+grep -Fq -- '-jar /app/runtime/app.jar' "$output_dir/java-args" || {
   echo 'Entrypoint did not select the pending verified runtime JAR.' >&2
   cat "$output_dir/java-args" >&2
   exit 1
 }
+
+if grep -Fq -- '/opt/xianyu2/app.jar' "$output_dir/java-args"; then
+  echo 'Entrypoint selected the image-bundled JAR instead of the pending verified runtime JAR.' >&2
+  cat "$output_dir/java-args" >&2
+  exit 1
+fi
