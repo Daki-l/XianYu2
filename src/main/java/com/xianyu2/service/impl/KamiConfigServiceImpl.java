@@ -3,7 +3,9 @@ package com.xianyu2.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyu2.common.ResultObject;
+import com.xianyu2.context.TenantContext;
 import com.xianyu2.controller.dto.*;
+import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuKamiConfig;
 import com.xianyu2.entity.XianyuKamiItem;
 import com.xianyu2.entity.XianyuKamiUsageRecord;
@@ -15,6 +17,7 @@ import com.xianyu2.mapper.XianyuKamiExternalRequestMapper;
 import com.xianyu2.mapper.XianyuKamiItemMapper;
 import com.xianyu2.mapper.XianyuKamiUsageRecordMapper;
 import com.xianyu2.service.EmailNotifyService;
+import com.xianyu2.service.ExternalKamiConfigNormalizer;
 import com.xianyu2.service.ExternalKamiProvisionService;
 import com.xianyu2.service.KamiConfigService;
 import com.xianyu2.service.NotificationCenterService;
@@ -88,13 +91,12 @@ public class KamiConfigServiceImpl implements KamiConfigService {
                     return ResultObject.failed("存在预占库存或待核对供货请求，暂不能修改供货来源");
                 }
             } else {
-                // 创建前按租户校验账号归属，避免配置挂载到其他租户账号。
-                if (reqDTO.getXianyuAccountId() == null
-                        || xianyuAccountMapper.selectById(reqDTO.getXianyuAccountId()) == null) {
-                    return ResultObject.failed("闲鱼账号不存在或无权访问");
+                Long tenantId = TenantContext.get();
+                if (tenantId == null) {
+                    return ResultObject.failed("未找到当前租户");
                 }
                 config = new XianyuKamiConfig();
-                config.setXianyuAccountId(reqDTO.getXianyuAccountId());
+                config.setTenantId(tenantId);
                 config.setTotalCount(0);
                 config.setUsedCount(0);
             }
@@ -109,6 +111,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
             }
             config.setExternalApiBody(reqDTO.getExternalApiBody());
             config.setExternalApiResultPath(reqDTO.getExternalApiResultPath());
+            config.setExternalApiOrderIdPath(reqDTO.getExternalApiOrderIdPath());
             config.setExternalApiTimeoutSeconds(reqDTO.getExternalApiTimeoutSeconds() == null
                     ? 10 : reqDTO.getExternalApiTimeoutSeconds());
             if (reqDTO.getAlertEnabled() != null) {
@@ -136,9 +139,9 @@ public class KamiConfigServiceImpl implements KamiConfigService {
     }
 
     @Override
-    public ResultObject<List<KamiConfigRespDTO>> getConfigsByAccountId(Long xianyuAccountId) {
+    public ResultObject<List<KamiConfigRespDTO>> getConfigs() {
         try {
-            List<XianyuKamiConfig> configs = kamiConfigMapper.findByAccountId(xianyuAccountId);
+            List<XianyuKamiConfig> configs = kamiConfigMapper.findAll();
             List<KamiConfigRespDTO> result = configs.stream()
                     .map(this::toConfigRespDTO)
                     .collect(Collectors.toList());
@@ -312,10 +315,15 @@ public class KamiConfigServiceImpl implements KamiConfigService {
     @Transactional
     public ResultObject<Void> resetKamiItem(Long id) {
         try {
+            XianyuKamiItem item = kamiItemMapper.selectById(id);
+            if (item == null) {
+                return ResultObject.failed("卡密不存在");
+            }
             int rows = kamiItemMapper.markUnused(id);
             if (rows == 0) {
                 return ResultObject.failed("卡密状态重置失败，可能已是未使用状态");
             }
+            refreshConfigCounts(item.getKamiConfigId());
             return ResultObject.success(null);
         } catch (Exception e) {
             log.error("重置卡密状态失败", e);
@@ -324,9 +332,9 @@ public class KamiConfigServiceImpl implements KamiConfigService {
     }
 
     @Override
-    public XianyuKamiItem acquireKami(Long kamiConfigId, String orderId) {
+    public XianyuKamiItem acquireKami(Long kamiConfigId, Long accountId, String orderId) {
         try {
-            List<XianyuKamiItem> items = reserveKami(kamiConfigId, orderId, 1);
+            List<XianyuKamiItem> items = reserveKami(kamiConfigId, accountId, orderId, 1);
             return items.isEmpty() ? null : items.getFirst();
         } catch (BusinessException e) {
             return null;
@@ -334,29 +342,39 @@ public class KamiConfigServiceImpl implements KamiConfigService {
     }
 
     @Override
-    public List<XianyuKamiItem> reserveKami(Long kamiConfigId, String orderId, int quantity) {
-        if (kamiConfigId == null || orderId == null || orderId.isBlank() || quantity < 1) {
+    public List<XianyuKamiItem> reserveKami(Long kamiConfigId, Long accountId, String orderId, int quantity) {
+        if (kamiConfigId == null || accountId == null || orderId == null || orderId.isBlank() || quantity < 1) {
             throw new BusinessException(400, "卡密预占参数无效");
+        }
+        XianyuAccount account = xianyuAccountMapper.selectById(accountId);
+        if (account == null) {
+            throw new BusinessException(404, "闲鱼账号不存在或无权访问");
         }
 
         XianyuKamiConfig sourceConfig = kamiConfigMapper.selectById(kamiConfigId);
         if (sourceConfig == null) {
             throw new BusinessException(404, "卡密配置不存在");
         }
+        // Scheduled delivery has its own tenant context, but this comparison keeps the
+        // warehouse boundary intact even if a caller reaches this service without one.
+        if (!Objects.equals(account.getTenantId(), sourceConfig.getTenantId())) {
+            throw new BusinessException(404, "卡密配置不存在或无权访问");
+        }
         if ("API".equalsIgnoreCase(sourceConfig.getSourceType())) {
-            return externalKamiProvisionService.reserve(sourceConfig, orderId, quantity);
+            return externalKamiProvisionService.reserve(sourceConfig, accountId, orderId, quantity);
         }
         List<XianyuKamiItem> reserved = new TransactionTemplate(transactionManager).execute(status ->
-                reserveLocalKami(kamiConfigId, orderId, quantity));
+                reserveLocalKami(kamiConfigId, accountId, orderId, quantity));
         if (reserved == null) {
             throw new BusinessException(409, "卡密预占失败");
         }
         return reserved;
     }
 
-    private List<XianyuKamiItem> reserveLocalKami(Long kamiConfigId, String orderId, int quantity) {
-        // 先按订单全局锁定已有卡密，防止多仓库回退或并发重试为同一订单换发卡密。
-        List<XianyuKamiItem> existing = kamiItemMapper.lockReservedByOrder(orderId);
+    private List<XianyuKamiItem> reserveLocalKami(Long kamiConfigId, Long accountId,
+                                                   String orderId, int quantity) {
+        // 订单幂等范围是实际账号和原始平台订单号，允许不同账号复用同一平台订单号。
+        List<XianyuKamiItem> existing = kamiItemMapper.lockReservedByOrder(accountId, orderId);
         if (!existing.isEmpty()) {
             boolean allReserved = existing.stream()
                     .allMatch(item -> item.getStatus() == KamiStatus.RESERVED.getCode());
@@ -377,16 +395,17 @@ public class KamiConfigServiceImpl implements KamiConfigService {
 
         List<XianyuKamiItem> items = kamiItemMapper.lockAvailable(kamiConfigId, quantity);
         if (items.size() != quantity) {
-            sendStockOutEmailIfNeeded(config, kamiConfigId, orderId);
+            sendStockOutEmailIfNeeded(config, kamiConfigId, accountId, orderId);
             throw new BusinessException(409, "卡密库存不足");
         }
 
         List<Long> itemIds = items.stream().map(XianyuKamiItem::getId).toList();
-        if (kamiItemMapper.reserve(itemIds, orderId) != quantity) {
+        if (kamiItemMapper.reserve(itemIds, accountId, orderId) != quantity) {
             throw new BusinessException(409, "卡密预占冲突");
         }
         items.forEach(item -> {
             item.setStatus(KamiStatus.RESERVED.getCode());
+            item.setOrderAccountId(accountId);
             item.setOrderId(orderId);
         });
         return items;
@@ -394,15 +413,15 @@ public class KamiConfigServiceImpl implements KamiConfigService {
 
     @Override
     @Transactional
-    public void commitReservation(String orderId, Long accountId, String xyGoodsId,
+    public void commitReservation(Long accountId, String orderId, String xyGoodsId,
                                   String buyerUserId, String buyerUserName) {
         List<XianyuKamiItem> reservedItems = kamiItemMapper.findByOrderAndStatus(
-                orderId, KamiStatus.RESERVED.getCode());
+                accountId, orderId, KamiStatus.RESERVED.getCode());
         if (reservedItems.isEmpty()) {
             return;
         }
 
-        if (kamiItemMapper.commitReservation(orderId) != reservedItems.size()) {
+        if (kamiItemMapper.commitReservation(accountId, orderId) != reservedItems.size()) {
             throw new BusinessException(409, "卡密交付提交冲突");
         }
 
@@ -426,28 +445,29 @@ public class KamiConfigServiceImpl implements KamiConfigService {
             refreshConfigCounts(configId);
             XianyuKamiConfig config = kamiConfigMapper.selectById(configId);
             if (config != null) {
-                checkAndSendAlert(config, configId);
+                checkAndSendAlert(config, configId, accountId);
             }
         });
     }
 
     @Override
     @Transactional
-    public void releaseReservation(String orderId) {
-        if (orderId != null && !orderId.isBlank()) {
-            kamiItemMapper.releaseReservation(orderId);
+    public void releaseReservation(Long accountId, String orderId) {
+        if (accountId != null && orderId != null && !orderId.isBlank()) {
+            kamiItemMapper.releaseReservation(accountId, orderId);
         }
     }
 
     @Override
     @Transactional
-    public void markReservationReviewRequired(String orderId) {
-        if (orderId != null && !orderId.isBlank()) {
-            kamiItemMapper.markReservationReviewRequired(orderId);
+    public void markReservationReviewRequired(Long accountId, String orderId) {
+        if (accountId != null && orderId != null && !orderId.isBlank()) {
+            kamiItemMapper.markReservationReviewRequired(accountId, orderId);
         }
     }
 
-    private void sendStockOutEmailIfNeeded(XianyuKamiConfig config, Long kamiConfigId, String orderId) {
+    private void sendStockOutEmailIfNeeded(XianyuKamiConfig config, Long kamiConfigId,
+                                           Long accountId, String orderId) {
         Long lastSentTime = stockOutEmailSentTime.get(kamiConfigId);
         long now = System.currentTimeMillis();
         if (lastSentTime != null && (now - lastSentTime) < STOCK_OUT_EMAIL_INTERVAL_MS) {
@@ -456,7 +476,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         }
         stockOutEmailSentTime.put(kamiConfigId, now);
         String configName = config.getAliasName() != null ? config.getAliasName() : "卡密配置" + kamiConfigId;
-        notificationCenterService.dispatch("KAMI_STOCK_LOW", config.getXianyuAccountId(),
+        notificationCenterService.dispatch("KAMI_STOCK_LOW", accountId,
                 "卡密库存不足", configName + " 已无可用卡密",
                 Map.of("configId", kamiConfigId, "orderId", orderId == null ? "" : orderId));
         emailNotifyService.sendKamiStockOutEmail(config.getAlertEmail(), configName, orderId);
@@ -506,7 +526,6 @@ public class KamiConfigServiceImpl implements KamiConfigService {
     private KamiConfigRespDTO toConfigRespDTO(XianyuKamiConfig config) {
         KamiConfigRespDTO dto = new KamiConfigRespDTO();
         dto.setId(config.getId());
-        dto.setXianyuAccountId(config.getXianyuAccountId());
         dto.setAliasName(config.getAliasName());
         dto.setSourceType(config.getSourceType());
         dto.setExternalApiUrl(config.getExternalApiUrl());
@@ -514,6 +533,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
                 && !config.getExternalApiHeaders().isBlank());
         dto.setExternalApiBody(config.getExternalApiBody());
         dto.setExternalApiResultPath(config.getExternalApiResultPath());
+        dto.setExternalApiOrderIdPath(config.getExternalApiOrderIdPath());
         dto.setExternalApiTimeoutSeconds(config.getExternalApiTimeoutSeconds());
         dto.setAlertEnabled(config.getAlertEnabled());
         dto.setAlertThresholdType(config.getAlertThresholdType());
@@ -535,13 +555,14 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         dto.setKamiContent(item.getKamiContent());
         dto.setStatus(item.getStatus());
         dto.setOrderId(item.getOrderId());
+        dto.setOrderAccountId(item.getOrderAccountId());
         dto.setUsedTime(item.getUsedTime());
         dto.setSortOrder(item.getSortOrder());
         dto.setCreateTime(item.getCreateTime());
         return dto;
     }
 
-    private void checkAndSendAlert(XianyuKamiConfig config, Long kamiConfigId) {
+    private void checkAndSendAlert(XianyuKamiConfig config, Long kamiConfigId, Long accountId) {
         if (config == null || config.getAlertEnabled() == null || config.getAlertEnabled() != 1) {
             return;
         }
@@ -564,7 +585,7 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         if (shouldAlert) {
             log.info("卡密库存触发预警: configId={}, available={}, total={}, thresholdType={}, thresholdValue={}",
                     kamiConfigId, availableCount, totalCount, thresholdType, thresholdValue);
-            notificationCenterService.dispatch("KAMI_STOCK_LOW", config.getXianyuAccountId(),
+            notificationCenterService.dispatch("KAMI_STOCK_LOW", accountId,
                     "卡密库存预警", (config.getAliasName() == null ? "卡密仓库" : config.getAliasName())
                             + " 可用库存剩余 " + availableCount,
                     Map.of("configId", kamiConfigId,
@@ -588,7 +609,8 @@ public class KamiConfigServiceImpl implements KamiConfigService {
         if (!"API".equals(sourceType)) {
             return;
         }
-        WebhookSecurity.requireSafeUrl(request.getExternalApiUrl());
+        ExternalKamiConfigNormalizer.normalize(request, objectMapper);
+        request.setExternalApiUrl(WebhookSecurity.requireSafeUrl(request.getExternalApiUrl()));
         if (request.getExternalApiBody() == null || request.getExternalApiBody().isBlank()) {
             throw new IllegalArgumentException("请填写外部接口请求体模板");
         }
@@ -601,13 +623,17 @@ public class KamiConfigServiceImpl implements KamiConfigService {
             throw new IllegalArgumentException("外部接口超时时间必须在3到30秒之间");
         }
         try {
-            JsonNode body = objectMapper.readTree(request.getExternalApiBody());
+            JsonNode body = ExternalKamiConfigNormalizer.readBodyTemplate(
+                    request.getExternalApiBody(), objectMapper);
             if (!body.isObject()) {
                 throw new IllegalArgumentException("外部接口请求体必须是 JSON 对象");
             }
-            if (request.getExternalApiHeaders() != null && !request.getExternalApiHeaders().isBlank()
-                    && !objectMapper.readTree(request.getExternalApiHeaders()).isObject()) {
-                throw new IllegalArgumentException("外部接口请求头必须是 JSON 对象");
+            if (request.getExternalApiHeaders() != null && !request.getExternalApiHeaders().isBlank()) {
+                JsonNode headers = objectMapper.readTree(request.getExternalApiHeaders());
+                if (!headers.isObject()) {
+                    throw new IllegalArgumentException("外部接口请求头必须是 JSON 对象");
+                }
+                request.setExternalApiHeaders(objectMapper.writeValueAsString(headers));
             }
         } catch (IllegalArgumentException e) {
             throw e;
@@ -638,6 +664,8 @@ public class KamiConfigServiceImpl implements KamiConfigService {
                 || !Objects.equals(request.getExternalApiBody(), config.getExternalApiBody())
                 || !Objects.equals(trimToNull(request.getExternalApiResultPath()),
                         trimToNull(config.getExternalApiResultPath()))
+                || !Objects.equals(trimToNull(request.getExternalApiOrderIdPath()),
+                        trimToNull(config.getExternalApiOrderIdPath()))
                 || !Objects.equals(request.getExternalApiTimeoutSeconds() == null
                         ? 10 : request.getExternalApiTimeoutSeconds(), config.getExternalApiTimeoutSeconds());
     }

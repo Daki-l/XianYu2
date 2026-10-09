@@ -51,10 +51,10 @@ public interface XianyuKamiItemMapper extends BaseMapper<XianyuKamiItem> {
     @Select("SELECT COUNT(*) FROM xianyu_kami_item WHERE kami_config_id = #{kamiConfigId} AND kami_content = #{kamiContent}")
     int countByConfigIdAndContent(@Param("kamiConfigId") Long kamiConfigId, @Param("kamiContent") String kamiContent);
 
-    @Update("UPDATE xianyu_kami_item SET status = 1, order_id = #{orderId}, used_time = NOW(3) WHERE id = #{id} AND status = 0")
-    int markUsed(@Param("id") Long id, @Param("orderId") String orderId);
+    @Update("UPDATE xianyu_kami_item SET status = 1, order_account_id = #{accountId}, order_id = #{orderId}, used_time = NOW(3) WHERE id = #{id} AND status = 0")
+    int markUsed(@Param("id") Long id, @Param("accountId") Long accountId, @Param("orderId") String orderId);
 
-    @Update("UPDATE xianyu_kami_item SET status = 0, order_id = NULL, reserved_time = NULL, used_time = NULL WHERE id = #{id} AND status IN (1, 3)")
+    @Update("UPDATE xianyu_kami_item SET status = 0, order_account_id = NULL, order_id = NULL, reserved_time = NULL, used_time = NULL WHERE id = #{id} AND status IN (1, 3)")
     int markUnused(@Param("id") Long id);
 
     @Select("SELECT * FROM xianyu_kami_item WHERE kami_config_id = #{kamiConfigId} AND status = 0 " +
@@ -62,32 +62,39 @@ public interface XianyuKamiItemMapper extends BaseMapper<XianyuKamiItem> {
     List<XianyuKamiItem> lockAvailable(@Param("kamiConfigId") Long kamiConfigId,
                                        @Param("quantity") int quantity);
 
-    @Select("SELECT * FROM xianyu_kami_item WHERE order_id = #{orderId} " +
+    @Select("SELECT * FROM xianyu_kami_item WHERE order_account_id = #{accountId} AND order_id = #{orderId} " +
             "AND status IN (1, 2, 3) ORDER BY sort_order ASC, id ASC FOR UPDATE")
-    List<XianyuKamiItem> lockReservedByOrder(@Param("orderId") String orderId);
+    List<XianyuKamiItem> lockReservedByOrder(@Param("accountId") Long accountId, @Param("orderId") String orderId);
 
-    @Select("SELECT * FROM xianyu_kami_item WHERE order_id = #{orderId} AND status = #{status} ORDER BY id ASC")
-    List<XianyuKamiItem> findByOrderAndStatus(@Param("orderId") String orderId,
+    @Select("SELECT * FROM xianyu_kami_item WHERE order_account_id = #{accountId} AND order_id = #{orderId} AND status = #{status} ORDER BY id ASC FOR UPDATE")
+    List<XianyuKamiItem> findByOrderAndStatus(@Param("accountId") Long accountId,
+                                               @Param("orderId") String orderId,
                                                @Param("status") int status);
 
-    @Select("SELECT COUNT(*) FROM xianyu_kami_item WHERE order_id = #{orderId} AND status = #{status}")
-    int countByOrderAndStatus(@Param("orderId") String orderId, @Param("status") int status);
+    @Select("SELECT COUNT(*) FROM xianyu_kami_item WHERE order_account_id = #{accountId} AND order_id = #{orderId} AND status = #{status}")
+    int countByOrderAndStatus(@Param("accountId") Long accountId, @Param("orderId") String orderId, @Param("status") int status);
 
-    @Update("<script>UPDATE xianyu_kami_item SET status = 2, order_id = #{orderId}, reserved_time = NOW(3) " +
+    @Select("SELECT * FROM xianyu_kami_item WHERE kami_config_id = #{kamiConfigId} AND order_account_id = #{accountId} AND order_id = #{orderId} AND status = #{status} ORDER BY id ASC FOR UPDATE")
+    List<XianyuKamiItem> findByConfigAndOrderAndStatus(@Param("kamiConfigId") Long kamiConfigId,
+                                                        @Param("accountId") Long accountId,
+                                                        @Param("orderId") String orderId,
+                                                        @Param("status") int status);
+
+    @Update("<script>UPDATE xianyu_kami_item SET status = 2, order_account_id = #{accountId}, order_id = #{orderId}, reserved_time = NOW(3) " +
             "WHERE status = 0 AND id IN " +
             "<foreach collection='ids' item='id' open='(' separator=',' close=')'>#{id}</foreach></script>")
-    int reserve(@Param("ids") List<Long> ids, @Param("orderId") String orderId);
+    int reserve(@Param("ids") List<Long> ids, @Param("accountId") Long accountId, @Param("orderId") String orderId);
 
-    @Update("UPDATE xianyu_kami_item SET status = 1, used_time = NOW(3) WHERE order_id = #{orderId} AND status = 2")
-    int commitReservation(@Param("orderId") String orderId);
+    @Update("UPDATE xianyu_kami_item SET status = 1, used_time = NOW(3) WHERE order_account_id = #{accountId} AND order_id = #{orderId} AND status = 2")
+    int commitReservation(@Param("accountId") Long accountId, @Param("orderId") String orderId);
 
     @Update("UPDATE xianyu_kami_item item JOIN xianyu_kami_config config ON config.id = item.kami_config_id " +
-            "SET item.status = 0, item.order_id = NULL, item.reserved_time = NULL " +
-            "WHERE item.order_id = #{orderId} AND item.status = 2 AND config.source_type = 'LOCAL'")
-    int releaseReservation(@Param("orderId") String orderId);
+            "SET item.status = 0, item.order_account_id = NULL, item.order_id = NULL, item.reserved_time = NULL " +
+            "WHERE item.order_account_id = #{accountId} AND item.order_id = #{orderId} AND item.status = 2 AND config.source_type = 'LOCAL'")
+    int releaseReservation(@Param("accountId") Long accountId, @Param("orderId") String orderId);
 
-    @Update("UPDATE xianyu_kami_item SET status = 3 WHERE order_id = #{orderId} AND status = 2")
-    int markReservationReviewRequired(@Param("orderId") String orderId);
+    @Update("UPDATE xianyu_kami_item SET status = 3 WHERE order_account_id = #{accountId} AND order_id = #{orderId} AND status = 2")
+    int markReservationReviewRequired(@Param("accountId") Long accountId, @Param("orderId") String orderId);
 
     @Select("SELECT * FROM xianyu_kami_item WHERE kami_config_id = #{kamiConfigId} AND status = #{status} ORDER BY sort_order ASC")
     List<XianyuKamiItem> findByConfigIdAndStatus(@Param("kamiConfigId") Long kamiConfigId, @Param("status") Integer status);

@@ -13,10 +13,10 @@ public interface XianyuKamiExternalRequestMapper extends BaseMapper<XianyuKamiEx
 
     @Insert("""
             INSERT IGNORE INTO xianyu_kami_external_request
-                (kami_config_id, xianyu_account_id, order_id, request_token, quantity,
+                (tenant_id, kami_config_id, xianyu_account_id, order_id, request_token, quantity,
                  request_status, attempt_count, create_time, update_time)
             VALUES
-                (#{request.kamiConfigId}, #{request.xianyuAccountId}, #{request.orderId},
+                (#{request.tenantId}, #{request.kamiConfigId}, #{request.xianyuAccountId}, #{request.orderId},
                  #{request.requestToken}, #{request.quantity}, 'PROCESSING', 1, NOW(3), NOW(3))
             """)
     int insertIfAbsent(@Param("request") XianyuKamiExternalRequest request);
@@ -24,10 +24,15 @@ public interface XianyuKamiExternalRequestMapper extends BaseMapper<XianyuKamiEx
     @Select("""
             SELECT *
             FROM xianyu_kami_external_request
-            WHERE kami_config_id = #{kamiConfigId} AND order_id = #{orderId}
+            WHERE tenant_id = #{tenantId}
+              AND kami_config_id = #{kamiConfigId}
+              AND xianyu_account_id = #{accountId}
+              AND order_id = #{orderId}
             LIMIT 1
             """)
-    XianyuKamiExternalRequest findByOrder(@Param("kamiConfigId") Long kamiConfigId,
+    XianyuKamiExternalRequest findByOrder(@Param("tenantId") Long tenantId,
+                                          @Param("kamiConfigId") Long kamiConfigId,
+                                          @Param("accountId") Long accountId,
                                           @Param("orderId") String orderId);
 
     @Select("""
@@ -57,12 +62,15 @@ public interface XianyuKamiExternalRequestMapper extends BaseMapper<XianyuKamiEx
     @Update("""
             UPDATE xianyu_kami_external_request
             SET request_status = 'SUCCESS',
+                external_order_id = #{externalOrderId},
                 response_excerpt = #{responseExcerpt},
                 error_message = NULL,
                 update_time = NOW(3)
             WHERE id = #{id} AND request_status = 'PROCESSING'
             """)
-    int markSuccess(@Param("id") Long id, @Param("responseExcerpt") String responseExcerpt);
+    int markSuccess(@Param("id") Long id,
+                    @Param("externalOrderId") String externalOrderId,
+                    @Param("responseExcerpt") String responseExcerpt);
 
     @Update("""
             UPDATE xianyu_kami_external_request

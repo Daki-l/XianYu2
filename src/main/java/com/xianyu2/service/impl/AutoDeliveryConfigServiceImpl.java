@@ -311,8 +311,8 @@ public class AutoDeliveryConfigServiceImpl implements AutoDeliveryConfigService 
             try {
                 XianyuKamiConfig kamiConfig =
                         kamiConfigMapper.selectById(Long.parseLong(configIdText.trim()));
-                if (kamiConfig == null || !accountId.equals(kamiConfig.getXianyuAccountId())) {
-                    throw new IllegalArgumentException("卡密仓库不存在或不属于当前账号");
+                if (kamiConfig == null) {
+                    throw new IllegalArgumentException("卡密仓库不存在或不属于当前租户");
                 }
             } catch (NumberFormatException e) {
                 throw new IllegalArgumentException("卡密仓库参数格式错误");

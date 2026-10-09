@@ -17,6 +17,8 @@ public class KamiItemRespDTO {
 
     private String orderId;
 
+    private Long orderAccountId;
+
     private LocalDateTime usedTime;
 
     private Integer sortOrder;

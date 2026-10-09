@@ -18,14 +18,17 @@ public class ExternalKamiResponseParser {
     }
 
     public List<String> parse(String responseBody, String resultPath, int quantity) {
+        return parseResponse(responseBody, resultPath, null, quantity).contents();
+    }
+
+    public ParsedResponse parseResponse(String responseBody, String resultPath,
+                                        String externalOrderIdPath, int quantity) {
         if (quantity < 1) {
             throw new IllegalArgumentException("卡密数量必须大于0");
         }
         try {
-            JsonNode node = objectMapper.readTree(responseBody);
-            for (String segment : resultPath.split("\\.")) {
-                node = node.path(segment);
-            }
+            JsonNode response = objectMapper.readTree(responseBody);
+            JsonNode node = resolvePath(response, resultPath);
             List<String> contents = new ArrayList<>();
             if (node.isArray()) {
                 node.forEach(item -> addContent(contents, item));
@@ -35,7 +38,7 @@ public class ExternalKamiResponseParser {
             if (contents.size() != quantity) {
                 throw new IllegalArgumentException("外部接口返回的卡密数量与订单数量不一致");
             }
-            return contents;
+            return new ParsedResponse(contents, optionalText(resolvePath(response, externalOrderIdPath)));
         } catch (IllegalArgumentException e) {
             throw e;
         } catch (Exception e) {
@@ -48,5 +51,29 @@ public class ExternalKamiResponseParser {
         if (!value.isEmpty()) {
             contents.add(value);
         }
+    }
+
+    private JsonNode resolvePath(JsonNode root, String path) {
+        if (path == null || path.isBlank()) {
+            return root;
+        }
+        JsonNode node = root;
+        for (String segment : path.trim().split("\\.")) {
+            if (!segment.isBlank()) {
+                node = node.path(segment);
+            }
+        }
+        return node;
+    }
+
+    private String optionalText(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull() || !node.isValueNode()) {
+            return null;
+        }
+        String value = node.asText().trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    public record ParsedResponse(List<String> contents, String externalOrderId) {
     }
 }

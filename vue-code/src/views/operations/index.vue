@@ -6,7 +6,7 @@ import {
   getMerchantOverview, getResources, getTasks, requeueTask, saveResource, settleDistribution,
   type MerchantDistribution, type MerchantOverview, type MerchantResource, type MerchantTask, type ResourceType
 } from '@/api/merchant'
-import { getKamiConfigsByAccountId, type KamiConfig } from '@/api/kami-config'
+import { getKamiConfigs, type KamiConfig } from '@/api/kami-config'
 import type { Account } from '@/types'
 import { showConfirm, showError, showSuccess } from '@/utils'
 
@@ -95,20 +95,18 @@ const runWithAction = async (key: string, action: () => Promise<void>) => {
 }
 
 const loadKamiConfigs = async () => {
-  if (form.resourceType !== 'MATERIAL' || !form.xianyuAccountId) {
+  if (form.resourceType !== 'MATERIAL') {
     kamiConfigs.value = []
     kamiLoading.value = false
     return
   }
-  const accountId = Number(form.xianyuAccountId)
   kamiLoading.value = true
   try {
-    const configs = (await getKamiConfigsByAccountId(accountId)).data || []
-    if (Number(form.xianyuAccountId) === accountId) kamiConfigs.value = configs
+    kamiConfigs.value = (await getKamiConfigs()).data || []
   } catch {
-    if (Number(form.xianyuAccountId) === accountId) kamiConfigs.value = []
+    kamiConfigs.value = []
   } finally {
-    if (Number(form.xianyuAccountId) === accountId) kamiLoading.value = false
+    kamiLoading.value = false
   }
 }
 
@@ -401,7 +399,7 @@ onMounted(async () => {
             <label class="wide"><span>详情描述</span><textarea v-model="form.description" rows="4" placeholder="商品卖点与交付说明"></textarea></label>
             <label class="wide"><span>图片地址</span><textarea v-model="form.images" rows="3" placeholder="每行一个 HTTPS 图片地址"></textarea></label>
           </template>
-          <template v-if="form.resourceType === 'MATERIAL'"><label class="wide"><span>跳转目标</span><input v-model="form.targetUrl" placeholder="用于生成站内短链"></label><label><span>卡券仓库</span><select v-model="form.kamiConfigId" :disabled="!form.xianyuAccountId || kamiLoading"><option :value="undefined">{{ !form.xianyuAccountId ? '请先选择关联账号' : kamiLoading ? '正在加载卡券仓库' : '不绑定卡券仓库' }}</option><option v-for="config in kamiConfigs" :key="config.id" :value="config.id">{{ config.aliasName }}（可用 {{ config.availableCount }}）</option></select><small class="form-hint">绑定后可用于虚拟商品自动交付</small></label></template>
+          <template v-if="form.resourceType === 'MATERIAL'"><label class="wide"><span>跳转目标</span><input v-model="form.targetUrl" placeholder="用于生成站内短链"></label><label><span>卡券仓库</span><select v-model="form.kamiConfigId" :disabled="kamiLoading"><option :value="undefined">{{ kamiLoading ? '正在加载卡券仓库' : '不绑定卡券仓库' }}</option><option v-for="config in kamiConfigs" :key="config.id" :value="config.id">{{ config.aliasName }}（可用 {{ config.availableCount }}）</option></select><small class="form-hint">绑定后可用于虚拟商品自动交付</small></label></template>
           <template v-if="['MATERIAL','PUBLISH_RULE'].includes(form.resourceType)"><label><span>发布地址</span><select v-model="form.addressId"><option :value="undefined">平台默认地址</option><option v-for="address in addresses" :key="address.id" :value="address.id">{{ address.name }}</option></select></label></template>
           <template v-if="form.resourceType === 'SUPPLY'"><label class="wide"><span>来源地址</span><input v-model="form.sourceUrl" placeholder="货源详情地址"></label><label><span>预计佣金</span><input v-model.number="form.commissionAmount" type="number" min="0" step="0.01"></label><label><span>闲鱼商品 ID</span><input v-model="form.xyGoodsId"></label></template>
           <template v-if="form.resourceType === 'ADDRESS'"><label><span>省份</span><input v-model="form.province"></label><label><span>城市</span><input v-model="form.city"></label><label class="wide"><span>详细地址</span><input v-model="form.detail"></label></template>

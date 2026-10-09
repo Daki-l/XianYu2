@@ -455,7 +455,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
 
             if (voucherDeliveryEnabled && finalDeliveryContent.length() > 200) {
                 if (cardDelivery) {
-                    kamiConfigService.releaseReservation(orderId);
+                    kamiConfigService.releaseReservation(accountId, orderId);
                 }
                 String failMsg = "渲染后的发货内容超过凭证接口200字符限制，请缩短模板或关闭凭证发货";
                 updateRecordState(recordId, -1, null, failMsg);
@@ -502,7 +502,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                         accountId, orderId, finalDeliveryContent, imageUrls);
                 if (OrderService.CONSIGN_DEFERRED.equals(deliveryResult)) {
                     if (cardDelivery) {
-                        kamiConfigService.releaseReservation(orderId);
+                        kamiConfigService.releaseReservation(accountId, orderId);
                     }
                     if (deliveryMessageHeld) {
                         buyerMessageService.cancelHeldDeliveryMessage(deliveryOrder);
@@ -519,7 +519,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     String failReason = "发货结果待确认，请核对平台凭证后处理";
                     if (cardDelivery) {
                         // 外部接口结果不确定时锁定原卡密，避免重试后向同一订单分配不同内容。
-                        kamiConfigService.markReservationReviewRequired(orderId);
+                        kamiConfigService.markReservationReviewRequired(accountId, orderId);
                     }
                     if (deliveryMessageHeld) {
                         buyerMessageService.cancelHeldDeliveryMessage(deliveryOrder);
@@ -534,7 +534,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                     String failReason = "订单已存在发货凭证，请核对凭证与私聊内容";
                     if (cardDelivery) {
                         // 已存在凭证时无法确认首次请求是否使用当前卡密，必须锁定等待核对。
-                        kamiConfigService.markReservationReviewRequired(orderId);
+                        kamiConfigService.markReservationReviewRequired(accountId, orderId);
                     }
                     if (deliveryMessageHeld) {
                         buyerMessageService.cancelHeldDeliveryMessage(deliveryOrder);
@@ -547,7 +547,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
                 }
                 if (!OrderService.CONSIGN_SUCCESS.equals(deliveryResult)) {
                     if (cardDelivery) {
-                        kamiConfigService.releaseReservation(orderId);
+                        kamiConfigService.releaseReservation(accountId, orderId);
                     }
                     if (deliveryMessageHeld) {
                         buyerMessageService.cancelHeldDeliveryMessage(deliveryOrder);
@@ -573,7 +573,7 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             if (cardDelivery) {
                 try {
                     // 私聊内容已处于不可调度状态，卡密提交成功后再激活发送。
-                    kamiConfigService.commitReservation(orderId, accountId, xyGoodsId, cid, resolvedBuyerName);
+                    kamiConfigService.commitReservation(accountId, orderId, xyGoodsId, cid, resolvedBuyerName);
                     cardReservationCommitted = true;
                 } catch (RuntimeException e) {
                     if (deliveryMessageHeld) {
@@ -618,9 +618,9 @@ public class AutoDeliveryServiceImpl implements AutoDeliveryService {
             }
             if (cardDelivery && !cardReservationCommitted) {
                 if (cardDeliveryAttempted) {
-                    kamiConfigService.markReservationReviewRequired(orderId);
+                    kamiConfigService.markReservationReviewRequired(accountId, orderId);
                 } else {
-                    kamiConfigService.releaseReservation(orderId);
+                    kamiConfigService.releaseReservation(accountId, orderId);
                 }
             }
             log.error("【账号{}】执行自动发货异常: recordId={}, xyGoodsId={}", accountId, recordId, xyGoodsId, e);

@@ -64,6 +64,8 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
             map.put("fixedTemplateName", fixedTemplate == null ? null : fixedTemplate.getTemplateName());
             map.put("autoDeliveryContent", config.getAutoDeliveryContent());
             map.put("kamiConfigIds", config.getKamiConfigIds());
+            // Shared warehouses are restored through the kami module's sourceId -> targetId map.
+            map.put("kamiConfigSourceIds", config.getKamiConfigIds());
             map.put("kamiDeliveryTemplate", config.getKamiDeliveryTemplate());
             map.put("deliveryMessageTemplate", config.getDeliveryMessageTemplate());
             map.put("voucherDeliveryEnabled", config.getVoucherDeliveryEnabled());
@@ -140,8 +142,12 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
                 config.setSkuName((String) map.get("skuName"));
                 int deliveryMode = map.get("deliveryMode") != null
                         ? ((Number) map.get("deliveryMode")).intValue() : 1;
+                boolean hasSourceKamiConfigIds = map.containsKey("kamiConfigSourceIds");
+                String sourceKamiConfigIds = !hasSourceKamiConfigIds
+                        ? (String) map.get("kamiConfigIds")
+                        : (String) map.get("kamiConfigSourceIds");
                 String kamiConfigIds = resolveKamiConfigIds(
-                        accountId, (String) map.get("kamiConfigIds"), kamiConfigIdMap);
+                        sourceKamiConfigIds, kamiConfigIdMap, !hasSourceKamiConfigIds);
                 deliveryMode = deliveryMode == 2
                         || (deliveryMode == 3 && kamiConfigIds != null && !kamiConfigIds.isBlank()) ? 2 : 1;
                 config.setDeliveryMode(deliveryMode);
@@ -185,7 +191,8 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
         }
     }
 
-    private String resolveKamiConfigIds(Long accountId, String sourceIds, Map<String, Long> idMap) {
+    private String resolveKamiConfigIds(String sourceIds, Map<String, Long> idMap,
+                                        boolean allowLegacyIdFallback) {
         if (sourceIds == null || sourceIds.isBlank()) {
             return null;
         }
@@ -197,11 +204,18 @@ public class AutoDeliveryBackupHandler implements DataBackupHandler {
             }
             Long targetId = idMap.get(key);
             if (targetId == null) {
-                targetId = Long.valueOf(key);
+                if (!allowLegacyIdFallback) {
+                    throw new IllegalArgumentException("卡密仓库 sourceId 未找到恢复映射");
+                }
+                try {
+                    targetId = Long.valueOf(key);
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException("卡密仓库 ID 格式错误");
+                }
             }
             XianyuKamiConfig kamiConfig = kamiConfigMapper.selectById(targetId);
-            if (kamiConfig == null || !accountId.equals(kamiConfig.getXianyuAccountId())) {
-                throw new IllegalArgumentException("卡密仓库不存在或与商品账号不一致");
+            if (kamiConfig == null) {
+                throw new IllegalArgumentException("卡密仓库不存在或不属于当前租户");
             }
             resolvedIds.add(String.valueOf(targetId));
         }

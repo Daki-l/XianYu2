@@ -2,7 +2,6 @@ import { request } from '@/utils/request';
 
 export interface KamiConfig {
   id: number;
-  xianyuAccountId: number;
   aliasName: string;
   sourceType?: 'LOCAL' | 'API';
   externalApiUrl?: string;
@@ -10,6 +9,7 @@ export interface KamiConfig {
   externalApiHeadersConfigured?: boolean;
   externalApiBody?: string;
   externalApiResultPath?: string;
+  externalApiOrderIdPath?: string;
   externalApiTimeoutSeconds?: number;
   alertEnabled?: number;
   alertThresholdType?: number;
@@ -28,6 +28,7 @@ export interface KamiItem {
   kamiContent: string;
   status: number;
   orderId: string | null;
+  orderAccountId: number | null;
   usedTime: string | null;
   sortOrder: number;
   createTime: string;
@@ -35,13 +36,13 @@ export interface KamiItem {
 
 export interface SaveKamiConfigReq {
   id?: number;
-  xianyuAccountId: number;
   aliasName?: string;
   sourceType?: 'LOCAL' | 'API';
   externalApiUrl?: string;
   externalApiHeaders?: string;
   externalApiBody?: string;
   externalApiResultPath?: string;
+  externalApiOrderIdPath?: string;
   externalApiTimeoutSeconds?: number;
   alertEnabled?: number;
   alertThresholdType?: number;
@@ -63,11 +64,10 @@ export function saveKamiConfig(data: SaveKamiConfigReq) {
   });
 }
 
-export function getKamiConfigsByAccountId(xianyuAccountId: number) {
+export function getKamiConfigs() {
   return request<KamiConfig[]>({
     url: '/kami-config/list',
-    method: 'POST',
-    params: { xianyuAccountId }
+    method: 'POST'
   });
 }
 

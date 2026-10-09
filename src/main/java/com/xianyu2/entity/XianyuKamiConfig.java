@@ -13,7 +13,8 @@ public class XianyuKamiConfig {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    private Long xianyuAccountId;
+    @JsonIgnore
+    private Long tenantId;
 
     private String aliasName;
 
@@ -27,6 +28,8 @@ public class XianyuKamiConfig {
     private String externalApiBody;
 
     private String externalApiResultPath;
+
+    private String externalApiOrderIdPath;
 
     private Integer externalApiTimeoutSeconds;
 

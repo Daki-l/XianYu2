@@ -2,7 +2,6 @@ package com.xianyu2.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xianyu2.context.TenantContext;
-import com.xianyu2.context.UserContext;
 import com.xianyu2.entity.XianyuKamiConfig;
 import com.xianyu2.entity.XianyuKamiExternalRequest;
 import com.xianyu2.entity.XianyuKamiItem;
@@ -48,10 +47,11 @@ public class ExternalKamiProvisionService {
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
-    public List<XianyuKamiItem> reserve(XianyuKamiConfig config, String orderId, int quantity) {
+    public List<XianyuKamiItem> reserve(XianyuKamiConfig config, Long accountId,
+                                        String orderId, int quantity) {
         // 短事务锁定配置并建立幂等请求，配置修改或删除无法与供货请求交叉执行。
         Preparation preparation = transactionTemplate.execute(status ->
-                prepare(config.getId(), orderId, quantity));
+                prepare(config.getId(), accountId, orderId, quantity));
         if (preparation == null) {
             throw new BusinessException(409, "外部卡密请求准备失败");
         }
@@ -63,12 +63,13 @@ public class ExternalKamiProvisionService {
 
         try {
             String responseBody = gateway.request(
-                    currentConfig, orderId, quantity, request.getRequestToken());
-            List<String> contents = responseParser.parse(
-                    responseBody, currentConfig.getExternalApiResultPath(), quantity);
+                    currentConfig, accountId, orderId, quantity, request.getRequestToken());
+            ExternalKamiResponseParser.ParsedResponse parsedResponse = responseParser.parseResponse(
+                    responseBody, currentConfig.getExternalApiResultPath(),
+                    currentConfig.getExternalApiOrderIdPath(), quantity);
             XianyuKamiExternalRequest finalRequest = request;
             List<XianyuKamiItem> items = transactionTemplate.execute(status ->
-                    saveReservedItems(currentConfig, orderId, contents, finalRequest));
+                    saveReservedItems(currentConfig, accountId, orderId, parsedResponse, finalRequest));
             if (items == null) {
                 throw new BusinessException(409, "外部卡密保存失败");
             }
@@ -87,7 +88,19 @@ public class ExternalKamiProvisionService {
         }
     }
 
-    private Preparation prepare(Long configId, String orderId, int quantity) {
+    private Preparation prepare(Long configId, Long accountId, String orderId, int quantity) {
+        List<XianyuKamiItem> existingItems = itemMapper.lockReservedByOrder(accountId, orderId);
+        if (!existingItems.isEmpty()) {
+            boolean allReserved = existingItems.stream()
+                    .allMatch(item -> item.getStatus() == KamiStatus.RESERVED.getCode());
+            if (allReserved && existingItems.size() == quantity) {
+                return new Preparation(null, null, existingItems);
+            }
+            if (allReserved) {
+                throw new BusinessException(409, "订单卡密数量与已有预占不一致");
+            }
+            throw new BusinessException(409, "订单卡密已交付或正在待核对");
+        }
         XianyuKamiConfig config = configMapper.lockById(configId);
         if (config == null) {
             throw new BusinessException(404, "卡密配置不存在");
@@ -95,10 +108,11 @@ public class ExternalKamiProvisionService {
         if (!"API".equalsIgnoreCase(config.getSourceType())) {
             throw new BusinessException(409, "卡密供货来源已变更，请重新提交订单");
         }
-        XianyuKamiExternalRequest request = createRequest(config, orderId, quantity);
+        Long tenantId = requireTenantId(config);
+        XianyuKamiExternalRequest request = createRequest(config, tenantId, accountId, orderId, quantity);
         boolean ownsRequest = requestMapper.insertIfAbsent(request) == 1;
         if (!ownsRequest) {
-            request = requestMapper.findByOrder(config.getId(), orderId);
+            request = requestMapper.findByOrder(tenantId, config.getId(), accountId, orderId);
             if (request == null) {
                 throw new BusinessException(409, "外部卡密请求状态异常");
             }
@@ -106,8 +120,8 @@ public class ExternalKamiProvisionService {
                 throw new BusinessException(409, "订单卡密数量与已有外部供货请求不一致");
             }
             if ("SUCCESS".equals(request.getRequestStatus())) {
-                List<XianyuKamiItem> existing = itemMapper.findByOrderAndStatus(
-                        orderId, KamiStatus.RESERVED.getCode());
+                List<XianyuKamiItem> existing = itemMapper.findByConfigAndOrderAndStatus(
+                        config.getId(), accountId, orderId, KamiStatus.RESERVED.getCode());
                 if (existing.size() == quantity) {
                     return new Preparation(config, request, existing);
                 }
@@ -120,9 +134,9 @@ public class ExternalKamiProvisionService {
             if (requestMapper.claimRetry(request.getId()) != 1) {
                 throw new BusinessException(409, "外部卡密请求无法重试，需要人工核对");
             }
-            request = requestMapper.findByOrder(config.getId(), orderId);
+            request = requestMapper.findByOrder(tenantId, config.getId(), accountId, orderId);
         } else {
-            request = requestMapper.findByOrder(config.getId(), orderId);
+            request = requestMapper.findByOrder(tenantId, config.getId(), accountId, orderId);
         }
         if (request == null) {
             throw new BusinessException(409, "外部卡密请求状态异常");
@@ -130,34 +144,48 @@ public class ExternalKamiProvisionService {
         return new Preparation(config, request, null);
     }
 
-    private List<XianyuKamiItem> saveReservedItems(XianyuKamiConfig config, String orderId,
-                                                   List<String> contents,
+    private List<XianyuKamiItem> saveReservedItems(XianyuKamiConfig config, Long accountId,
+                                                   String orderId,
+                                                   ExternalKamiResponseParser.ParsedResponse parsedResponse,
                                                    XianyuKamiExternalRequest request) {
+        List<String> contents = parsedResponse.contents();
         for (int index = 0; index < contents.size(); index++) {
             XianyuKamiItem item = new XianyuKamiItem();
             item.setKamiConfigId(config.getId());
             item.setKamiContent(contents.get(index));
             item.setStatus(KamiStatus.RESERVED.getCode());
+            item.setOrderAccountId(accountId);
             item.setOrderId(orderId);
             item.setReservedTime(LocalDateTime.now());
             item.setSortOrder(index);
             itemMapper.insert(item);
         }
-        if (requestMapper.markSuccess(request.getId(), "received " + contents.size() + " item(s)") != 1) {
+        if (requestMapper.markSuccess(request.getId(), parsedResponse.externalOrderId(),
+                "received " + contents.size() + " item(s)") != 1) {
             throw new IllegalStateException("外部卡密请求状态已变化");
         }
-        return itemMapper.findByOrderAndStatus(orderId, KamiStatus.RESERVED.getCode());
+        return itemMapper.findByConfigAndOrderAndStatus(
+                config.getId(), accountId, orderId, KamiStatus.RESERVED.getCode());
     }
 
-    private XianyuKamiExternalRequest createRequest(XianyuKamiConfig config, String orderId, int quantity) {
+    private XianyuKamiExternalRequest createRequest(XianyuKamiConfig config, Long tenantId, Long accountId,
+                                                     String orderId, int quantity) {
         XianyuKamiExternalRequest request = new XianyuKamiExternalRequest();
-        request.setTenantId(TenantContext.get() == null ? UserContext.getUserId() : TenantContext.get());
+        request.setTenantId(tenantId);
         request.setKamiConfigId(config.getId());
-        request.setXianyuAccountId(config.getXianyuAccountId());
+        request.setXianyuAccountId(accountId);
         request.setOrderId(orderId);
         request.setRequestToken(UUID.randomUUID().toString().replace("-", ""));
         request.setQuantity(quantity);
         return request;
+    }
+
+    private Long requireTenantId(XianyuKamiConfig config) {
+        Long tenantId = config.getTenantId() == null ? TenantContext.get() : config.getTenantId();
+        if (tenantId == null) {
+            throw new BusinessException(400, "未找到当前租户");
+        }
+        return tenantId;
     }
 
     private boolean isStaleProcessing(XianyuKamiExternalRequest request) {

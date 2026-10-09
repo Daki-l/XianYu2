@@ -9,8 +9,6 @@ public class KamiConfigRespDTO {
 
     private Long id;
 
-    private Long xianyuAccountId;
-
     private String aliasName;
 
     private String sourceType;
@@ -24,6 +22,8 @@ public class KamiConfigRespDTO {
     private String externalApiBody;
 
     private String externalApiResultPath;
+
+    private String externalApiOrderIdPath;
 
     private Integer externalApiTimeoutSeconds;
 

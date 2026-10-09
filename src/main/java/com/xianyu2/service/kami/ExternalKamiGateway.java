@@ -25,16 +25,19 @@ public class ExternalKamiGateway {
         this.httpsClient = httpsClient;
     }
 
-    public String request(XianyuKamiConfig config, String orderId, int quantity, String requestToken) {
+    public String request(XianyuKamiConfig config, Long accountId, String orderId,
+                          int quantity, String requestToken) {
         try {
-            String body = replaceVariables(config.getExternalApiBody(), orderId, quantity, requestToken);
+            String clientOrderNo = clientOrderNo(accountId, orderId);
+            String body = renderBody(config.getExternalApiBody(), accountId, orderId,
+                    clientOrderNo, quantity, requestToken, objectMapper);
             Map<String, String> headers = new LinkedHashMap<>();
             headers.put("Content-Type", "application/json");
             headers.put("User-Agent", "XianYu2-External-Supply/2");
             headers.put("Idempotency-Key", requestToken);
             for (Map.Entry<String, String> header : parseHeaders(config.getExternalApiHeaders()).entrySet()) {
                 headers.put(header.getKey(), replaceVariables(
-                        header.getValue(), orderId, quantity, requestToken));
+                        header.getValue(), accountId, orderId, clientOrderNo, quantity, requestToken));
             }
             PinnedHttpsClient.Response response = httpsClient.post(
                     config.getExternalApiUrl(), headers, body,
@@ -73,11 +76,35 @@ public class ExternalKamiGateway {
         return headers;
     }
 
-    private String replaceVariables(String value, String orderId, int quantity, String requestToken) {
+    static String renderBody(String template, String orderId, int quantity, String requestToken,
+                             ObjectMapper objectMapper) throws Exception {
+        return renderBody(template, null, orderId, null, quantity, requestToken, objectMapper);
+    }
+
+    static String renderBody(String template, Long accountId, String orderId, String clientOrderNo,
+                             int quantity, String requestToken, ObjectMapper objectMapper) throws Exception {
+        String rendered = replaceVariables(template, accountId, orderId,
+                clientOrderNo == null ? clientOrderNo(accountId, orderId) : clientOrderNo,
+                quantity, requestToken);
+        JsonNode node = objectMapper.readTree(rendered);
+        if (!node.isObject()) {
+            throw new IllegalArgumentException("外部接口请求体必须渲染为 JSON 对象");
+        }
+        return objectMapper.writeValueAsString(node);
+    }
+
+    private static String replaceVariables(String value, Long accountId, String orderId,
+                                           String clientOrderNo, int quantity, String requestToken) {
         return (value == null ? "{}" : value)
                 .replace("{orderId}", orderId)
                 .replace("{quantity}", String.valueOf(quantity))
-                .replace("{requestToken}", requestToken);
+                .replace("{requestToken}", requestToken)
+                .replace("{accountId}", accountId == null ? "" : String.valueOf(accountId))
+                .replace("{clientOrderNo}", clientOrderNo);
+    }
+
+    private static String clientOrderNo(Long accountId, String orderId) {
+        return (accountId == null ? "" : accountId) + "_" + orderId;
     }
 
     public static class ExternalKamiException extends RuntimeException {

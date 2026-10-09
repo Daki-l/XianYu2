@@ -27,6 +27,8 @@ public class XianyuKamiExternalRequest {
 
     private String orderId;
 
+    private String externalOrderId;
+
     private String requestToken;
 
     private Integer quantity;

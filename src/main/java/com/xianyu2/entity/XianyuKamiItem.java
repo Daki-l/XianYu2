@@ -20,6 +20,8 @@ public class XianyuKamiItem {
 
     private String orderId;
 
+    private Long orderAccountId;
+
     private LocalDateTime reservedTime;
 
     private LocalDateTime usedTime;

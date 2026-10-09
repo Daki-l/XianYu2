@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, inject, defineComponent, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { toast } from '@/utils/toast'
 import { showConfirm } from '@/utils/confirm'
-import '@/styles/header-selectors.css'
 import {
-  getKamiConfigsByAccountId,
+  getKamiConfigs,
   saveKamiConfig,
   deleteKamiConfig,
   queryKamiItems,
@@ -17,16 +16,11 @@ import {
   type KamiConfig,
   type KamiItem
 } from '@/api/kami-config'
-import { getAccountList } from '@/api/account'
-import type { Account } from '@/types'
-import IconChevronDown from '@/components/icons/IconChevronDown.vue'
 import { isLowStockConfig } from './kami-stock'
 
 const route = useRoute()
 const router = useRouter()
 
-const accounts = ref<Account[]>([])
-const selectedAccountId = ref<number | null>(null)
 const kamiConfigs = ref<KamiConfig[]>([])
 const configLoading = ref(false)
 const lowStockOnly = ref(route.query.lowStock === '1')
@@ -44,6 +38,7 @@ const createForm = ref({
   externalApiHeaders: '{}',
   externalApiBody: '{\n  "orderId": "{orderId}",\n  "quantity": {quantity},\n  "requestToken": "{requestToken}"\n}',
   externalApiResultPath: 'data.cards',
+  externalApiOrderIdPath: '',
   externalApiTimeoutSeconds: 10
 })
 const createLoading = ref(false)
@@ -78,34 +73,6 @@ const checkScreenSize = () => {
   isMobile.value = window.innerWidth < 768
 }
 
-// 导航栏注入 — 必须在 setup 顶层调用
-const setHeaderContent = inject<(content: any) => void>('setHeaderContent')
-
-const HeaderSelectors = defineComponent({
-  setup() {
-    return () => h('div', { class: 'header-selectors' }, [
-      h('div', { class: 'header-select-wrap' }, [
-        h('select', {
-          class: 'header-select',
-          onChange: (e: Event) => {
-            const val = (e.target as HTMLSelectElement).value
-            selectedAccountId.value = val ? parseInt(val) : null
-          }
-        }, [
-          h('option', { value: '', disabled: true, selected: !selectedAccountId.value }, '账号'),
-          ...accounts.value.map(acc =>
-            h('option', {
-              value: acc.id.toString(),
-              selected: selectedAccountId.value === acc.id
-            }, acc.accountNote || acc.unb)
-          )
-        ]),
-        h(IconChevronDown, { class: 'header-select-icon' })
-      ])
-    ])
-  }
-})
-
 const selectedConfig = computed(() => {
   return kamiConfigs.value.find(c => c.id === selectedConfigId.value)
 })
@@ -132,6 +99,7 @@ const resetConfigForm = () => {
     externalApiHeaders: '{}',
     externalApiBody: '{\n  "orderId": "{orderId}",\n  "quantity": {quantity},\n  "requestToken": "{requestToken}"\n}',
     externalApiResultPath: 'data.cards',
+    externalApiOrderIdPath: '',
     externalApiTimeoutSeconds: 10
   }
 }
@@ -152,30 +120,16 @@ const openSourceConfigDialog = () => {
     externalApiHeaders: '',
     externalApiBody: config.externalApiBody || '{\n  "orderId": "{orderId}",\n  "quantity": {quantity},\n  "requestToken": "{requestToken}"\n}',
     externalApiResultPath: config.externalApiResultPath || 'data.cards',
+    externalApiOrderIdPath: config.externalApiOrderIdPath || '',
     externalApiTimeoutSeconds: config.externalApiTimeoutSeconds || 10
   }
   showCreateDialog.value = true
 }
 
-const loadAccounts = async () => {
-  try {
-    const res = await getAccountList()
-    if (res.code === 200 && res.data) {
-      accounts.value = res.data.accounts || []
-      if (accounts.value.length > 0 && !selectedAccountId.value) {
-        selectedAccountId.value = accounts.value[0]!.id
-      }
-    }
-  } catch (e) {
-    console.error('加载账号失败', e)
-  }
-}
-
 const loadKamiConfigs = async () => {
-  if (!selectedAccountId.value) return
   configLoading.value = true
   try {
-    const res = await getKamiConfigsByAccountId(selectedAccountId.value)
+    const res = await getKamiConfigs()
     if (res.code === 200) {
       kamiConfigs.value = res.data || []
       if (selectedConfigId.value && !visibleKamiConfigs.value.some(config => config.id === selectedConfigId.value)) {
@@ -216,12 +170,6 @@ const loadKamiItems = async () => {
   }
 }
 
-const handleAccountChange = () => {
-  selectedConfigId.value = null
-  kamiItems.value = []
-  loadKamiConfigs()
-}
-
 const selectConfig = (config: KamiConfig) => {
   selectedConfigId.value = config.id
   filterStatus.value = undefined
@@ -230,21 +178,17 @@ const selectConfig = (config: KamiConfig) => {
 }
 
 const handleCreate = async () => {
-  if (!selectedAccountId.value) {
-    toast.warning('请先选择账号')
-    return
-  }
   createLoading.value = true
   try {
     const res = await saveKamiConfig({
       id: editingConfigId.value,
-      xianyuAccountId: selectedAccountId.value,
       aliasName: createForm.value.aliasName || '未命名',
       sourceType: createForm.value.sourceType,
       externalApiUrl: createForm.value.sourceType === 'API' ? createForm.value.externalApiUrl : undefined,
       externalApiHeaders: createForm.value.sourceType === 'API' ? createForm.value.externalApiHeaders : undefined,
       externalApiBody: createForm.value.sourceType === 'API' ? createForm.value.externalApiBody : undefined,
       externalApiResultPath: createForm.value.sourceType === 'API' ? createForm.value.externalApiResultPath : undefined,
+      externalApiOrderIdPath: createForm.value.sourceType === 'API' ? createForm.value.externalApiOrderIdPath : undefined,
       externalApiTimeoutSeconds: createForm.value.sourceType === 'API' ? createForm.value.externalApiTimeoutSeconds : undefined
     })
     if (res.code === 200) {
@@ -389,13 +333,13 @@ const handleSaveAlert = async () => {
   try {
     const res = await saveKamiConfig({
       id: selectedConfigId.value,
-      xianyuAccountId: selectedAccountId.value!,
       aliasName: selectedConfig.value?.aliasName,
       sourceType: selectedConfig.value?.sourceType || 'LOCAL',
       externalApiUrl: selectedConfig.value?.externalApiUrl,
       externalApiHeaders: selectedConfig.value?.externalApiHeaders,
       externalApiBody: selectedConfig.value?.externalApiBody,
       externalApiResultPath: selectedConfig.value?.externalApiResultPath,
+      externalApiOrderIdPath: selectedConfig.value?.externalApiOrderIdPath,
       externalApiTimeoutSeconds: selectedConfig.value?.externalApiTimeoutSeconds,
       alertEnabled: alertForm.value.alertEnabled,
       alertThresholdType: alertForm.value.alertThresholdType,
@@ -444,9 +388,9 @@ const handleExport = async () => {
     const configName = selectedConfig.value?.aliasName || `配置${selectedConfigId.value}`
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '').replace('T', '_')
 
-    const header = '序号\t卡密内容\t状态\t订单ID\t使用时间\t添加时间\n'
+    const header = '序号\t卡密内容\t状态\t订单账号ID\t订单ID\t使用时间\t添加时间\n'
     const rows = allItems.map(item =>
-      `${item.sortOrder}\t${item.kamiContent}\t${item.status === 0 ? '未使用' : '已使用'}\t${item.orderId || ''}\t${item.usedTime || ''}\t${item.createTime}`
+      `${item.sortOrder}\t${item.kamiContent}\t${item.status === 0 ? '未使用' : '已使用'}\t${item.orderAccountId || ''}\t${item.orderId || ''}\t${item.usedTime || ''}\t${item.createTime}`
     ).join('\n')
     const content = header + rows
     const blob = new Blob(['\ufeff' + content], { type: 'text/plain;charset=utf-8' })
@@ -463,19 +407,10 @@ const handleExport = async () => {
   }
 }
 
-watch(selectedAccountId, () => {
-  if (selectedAccountId.value) {
-    selectedConfigId.value = null
-    kamiItems.value = []
-    loadKamiConfigs()
-  }
-})
-
-onMounted(async () => {
+onMounted(() => {
   checkScreenSize()
   window.addEventListener('resize', checkScreenSize)
-  if (setHeaderContent) setHeaderContent(HeaderSelectors)
-  await loadAccounts()
+  loadKamiConfigs()
 })
 
 onUnmounted(() => {
@@ -499,7 +434,7 @@ onUnmounted(() => {
         <header class="kami-mobile__header">
           <div class="kami-mobile__header-top">
             <h1 class="kami-page__title">卡密仓库</h1>
-            <button class="btn-primary btn-sm" @click="openCreateDialog" :disabled="!selectedAccountId">
+            <button class="btn-primary btn-sm" @click="openCreateDialog">
               新建
             </button>
           </div>
@@ -600,19 +535,7 @@ onUnmounted(() => {
       <header class="kami-page__header">
         <h1 class="kami-page__title">卡密仓库</h1>
         <div class="kami-page__actions">
-          <select
-            v-model="selectedAccountId"
-            class="account-select native-select"
-            @change="handleAccountChange"
-          >
-            <option value="" disabled>选择账号</option>
-            <option
-              v-for="acc in accounts"
-              :key="acc.id"
-              :value="acc.id"
-            >{{ acc.accountNote || `账号${acc.id}` }}</option>
-          </select>
-          <button class="btn-primary" @click="openCreateDialog" :disabled="!selectedAccountId">
+          <button class="btn-primary" @click="openCreateDialog">
             新建密钥仓库
           </button>
         </div>
@@ -689,6 +612,7 @@ onUnmounted(() => {
                       <th>序号</th>
                       <th>卡密内容</th>
                       <th>状态</th>
+                      <th>订单账号</th>
                       <th>订单ID</th>
                       <th>使用时间</th>
                       <th>添加时间</th>
@@ -704,6 +628,7 @@ onUnmounted(() => {
                           {{ item.status === 0 ? '未使用' : '已使用' }}
                         </span>
                       </td>
+                      <td class="kami-table__cell--id">{{ item.orderAccountId || '-' }}</td>
                       <td class="kami-table__cell--id">{{ item.orderId || '-' }}</td>
                       <td class="kami-table__cell--time">{{ item.usedTime || '-' }}</td>
                       <td class="kami-table__cell--time">{{ item.createTime }}</td>
@@ -764,11 +689,15 @@ onUnmounted(() => {
                 <div class="form-row">
                   <label class="form-label">请求体 JSON</label>
                   <textarea v-model="createForm.externalApiBody" class="form-textarea" rows="6"></textarea>
-                  <span class="form-suffix">变量：{orderId}、{quantity}、{requestToken}</span>
+                  <span class="form-suffix">变量：{orderId}、{quantity}、{requestToken}、{accountId}、{clientOrderNo}</span>
                 </div>
                 <div class="form-row">
                   <label class="form-label">结果路径</label>
                   <input v-model="createForm.externalApiResultPath" class="form-input" placeholder="例如 data.cards" />
+                </div>
+                <div class="form-row">
+                  <label class="form-label">供应商订单号路径</label>
+                  <input v-model="createForm.externalApiOrderIdPath" class="form-input" placeholder="可选，例如 data.orderId" />
                 </div>
                 <div class="form-row">
                   <label class="form-label">超时秒数</label>

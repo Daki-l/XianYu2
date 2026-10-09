@@ -25,7 +25,7 @@ import { showSuccess, showError, showInfo } from '@/utils'
 import { getConnectionStatus } from '@/api/websocket'
 import { toast } from '@/utils/toast'
 import {
-  getKamiConfigsByAccountId,
+  getKamiConfigs,
   type KamiConfig
 } from '@/api/kami-config'
 import {
@@ -566,9 +566,8 @@ export function useAutoDelivery() {
   }
 
   const loadKamiConfigOptions = async () => {
-    if (!selectedAccountId.value) return
     try {
-      const res = await getKamiConfigsByAccountId(selectedAccountId.value)
+      const res = await getKamiConfigs()
       if (res.code === 200) {
         kamiConfigOptions.value = res.data || []
       }

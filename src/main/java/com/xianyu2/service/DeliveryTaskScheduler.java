@@ -119,7 +119,8 @@ public class DeliveryTaskScheduler {
                 log.info("订单任务等待平台恢复: taskId={}, orderId={}", task.getId(), task.getOrderId());
             } else if (result != null && DeliveryStatus.REVIEW_REQUIRED.name().equals(result.getDeliveryStatus())) {
                 log.warn("订单发货结果待人工核对: taskId={}, orderId={}", task.getId(), task.getOrderId());
-            } else if (kamiItemMapper.countByOrderAndStatus(task.getOrderId(), KamiStatus.REVIEW_REQUIRED.getCode()) > 0) {
+            } else if (kamiItemMapper.countByOrderAndStatus(task.getXianyuAccountId(), task.getOrderId(),
+                    KamiStatus.REVIEW_REQUIRED.getCode()) > 0) {
                 deliveryTaskService.markReviewRequired(task.getId(), result != null ? result.getFailReason() : null);
             } else {
                 deliveryTaskService.retryOrFail(task.getId(), result != null ? result.getFailReason() : null);

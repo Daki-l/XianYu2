@@ -1011,9 +1011,6 @@ public class MerchantOperationsService {
                 if (resource.getXianyuAccountId() == null || resource.getXyGoodsId() == null) {
                     throw new IllegalArgumentException("卡券补偿需先完成商品发布和账号关联");
                 }
-                if (!resource.getXianyuAccountId().equals(kamiConfig.getXianyuAccountId())) {
-                    throw new IllegalArgumentException("卡券仓库与商品账号不一致");
-                }
                 XianyuGoodsAutoDeliveryConfig deliveryConfig = autoDeliveryConfigMapper.findByAccountIdAndGoodsIdNoSku(
                         resource.getXianyuAccountId(), resource.getXyGoodsId());
                 if (deliveryConfig == null) {

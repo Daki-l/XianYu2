@@ -11,7 +11,7 @@ public interface KamiConfigService {
 
     ResultObject<KamiConfigRespDTO> createOrUpdateConfig(KamiConfigReqDTO reqDTO);
 
-    ResultObject<List<KamiConfigRespDTO>> getConfigsByAccountId(Long xianyuAccountId);
+    ResultObject<List<KamiConfigRespDTO>> getConfigs();
 
     ResultObject<KamiConfigRespDTO> getConfigById(Long id);
 
@@ -29,15 +29,15 @@ public interface KamiConfigService {
 
     ResultObject<Void> resetKamiItem(Long id);
 
-    XianyuKamiItem acquireKami(Long kamiConfigId, String orderId);
+    XianyuKamiItem acquireKami(Long kamiConfigId, Long accountId, String orderId);
 
-    List<XianyuKamiItem> reserveKami(Long kamiConfigId, String orderId, int quantity);
+    List<XianyuKamiItem> reserveKami(Long kamiConfigId, Long accountId, String orderId, int quantity);
 
-    void commitReservation(String orderId, Long accountId, String xyGoodsId, String buyerUserId, String buyerUserName);
+    void commitReservation(Long accountId, String orderId, String xyGoodsId, String buyerUserId, String buyerUserName);
 
-    void releaseReservation(String orderId);
+    void releaseReservation(Long accountId, String orderId);
 
-    void markReservationReviewRequired(String orderId);
+    void markReservationReviewRequired(Long accountId, String orderId);
 
     XianyuKamiConfig getConfig(Long kamiConfigId);
 

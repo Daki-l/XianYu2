@@ -66,7 +66,7 @@ public class KamiDeliveryStrategy implements DeliveryContentStrategy {
         for (String configIdStr : configIdArr) {
             try {
                 Long configId = Long.parseLong(configIdStr.trim());
-                return kamiConfigService.reserveKami(configId, orderId, quantity).stream()
+                return kamiConfigService.reserveKami(configId, accountId, orderId, quantity).stream()
                         .map(XianyuKamiItem::getKamiContent)
                         .reduce((left, right) -> left + "\n" + right)
                         .orElse(null);

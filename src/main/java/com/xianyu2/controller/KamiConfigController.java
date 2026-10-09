@@ -21,7 +21,7 @@ public class KamiConfigController {
     @PostMapping("/save")
     public ResultObject<KamiConfigRespDTO> saveOrUpdateConfig(@Valid @RequestBody KamiConfigReqDTO reqDTO) {
         try {
-            log.info("保存卡密配置请求: id={}, xianyuAccountId={}", reqDTO.getId(), reqDTO.getXianyuAccountId());
+            log.info("保存租户共享卡密配置请求: id={}", reqDTO.getId());
             return kamiConfigService.createOrUpdateConfig(reqDTO);
         } catch (Exception e) {
             log.error("保存卡密配置失败", e);
@@ -30,9 +30,9 @@ public class KamiConfigController {
     }
 
     @PostMapping("/list")
-    public ResultObject<List<KamiConfigRespDTO>> getConfigsByAccountId(@RequestParam("xianyuAccountId") Long xianyuAccountId) {
+    public ResultObject<List<KamiConfigRespDTO>> getConfigs() {
         try {
-            return kamiConfigService.getConfigsByAccountId(xianyuAccountId);
+            return kamiConfigService.getConfigs();
         } catch (Exception e) {
             log.error("查询卡密配置列表失败", e);
             return ResultObject.failed("查询卡密配置列表失败: " + e.getMessage());
