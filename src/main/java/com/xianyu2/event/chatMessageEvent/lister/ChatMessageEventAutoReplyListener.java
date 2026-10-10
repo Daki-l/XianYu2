@@ -71,6 +71,13 @@ public class ChatMessageEventAutoReplyListener {
     public void handleChatMessageReceived(ChatMessageReceivedEvent event) {
         ChatMessageData message = event.getMessageData();
 
+        if (!event.isEligibleForRealtimeSideEffects()) {
+            log.debug("【账号{}】[AutoReplyListener]跳过非实时、重复或本地回显消息: pnmId={}, receiptSource={}, newlyPersisted={}, replyOrigin={}",
+                    message.getXianyuAccountId(), message.getPnmId(), event.getReceiptSource(),
+                    event.isNewlyPersisted(), message.getReplyOrigin());
+            return;
+        }
+
         log.info("【账号{}】[AutoReplyListener]收到ChatMessageReceivedEvent事件: pnmId={}, contentType={}, senderUserId={}, msgContent={}, xyGoodsId={}, sId={}", 
                 message.getXianyuAccountId(), message.getPnmId(), message.getContentType(),
                 message.getSenderUserId(), message.getMsgContent(), message.getXyGoodsId(), message.getSId());

@@ -1,5 +1,6 @@
 package com.xianyu2.event.chatMessageEvent;
 
+import com.xianyu2.entity.XianyuChatMessage;
 import lombok.Getter;
 import org.springframework.context.ApplicationEvent;
 
@@ -28,6 +29,21 @@ public class ChatMessageReceivedEvent extends ApplicationEvent {
      * <p>注意：使用自定义对象而不是数据库实体，避免耦合</p>
      */
     private final ChatMessageData messageData;
+
+    /**
+     * 消息进入事件链路时的来源。
+     */
+    private final ChatMessageEventSource receiptSource;
+
+    /**
+     * 保存监听器是否已完成首次入库判定。
+     */
+    private volatile boolean persistenceCompleted;
+
+    /**
+     * 该事件对应的平台消息是否是本次首次入库。
+     */
+    private volatile boolean newlyPersisted;
     
     /**
      * 构造函数
@@ -36,7 +52,38 @@ public class ChatMessageReceivedEvent extends ApplicationEvent {
      * @param messageData 解析后的聊天消息数据对象
      */
     public ChatMessageReceivedEvent(Object source, ChatMessageData messageData) {
+        this(source, messageData, ChatMessageEventSource.UNKNOWN);
+    }
+
+    public ChatMessageReceivedEvent(Object source, ChatMessageData messageData,
+                                    ChatMessageEventSource receiptSource) {
         super(source);
         this.messageData = messageData;
+        this.receiptSource = receiptSource == null ? ChatMessageEventSource.UNKNOWN : receiptSource;
+    }
+
+    /**
+     * 保存监听器会在有副作用的监听器运行前写入首次入库判定。
+     */
+    public void markPersistenceResult(boolean newlyPersisted, XianyuChatMessage persistedMessage) {
+        this.persistenceCompleted = true;
+        this.newlyPersisted = newlyPersisted;
+        if (persistedMessage == null) {
+            return;
+        }
+        messageData.setId(persistedMessage.getId());
+        messageData.setMessageSource(persistedMessage.getMessageSource());
+        messageData.setReplyOrigin(persistedMessage.getReplyOrigin());
+    }
+
+    /**
+     * 重复、回放、历史同步及本地回复回显均不得再次触发自动化。
+     */
+    public boolean isEligibleForRealtimeSideEffects() {
+        if (!persistenceCompleted || !newlyPersisted || !receiptSource.permitsRealtimeSideEffects()) {
+            return false;
+        }
+        String replyOrigin = messageData.getReplyOrigin();
+        return !"AI".equalsIgnoreCase(replyOrigin) && !"BACKEND".equalsIgnoreCase(replyOrigin);
     }
 }

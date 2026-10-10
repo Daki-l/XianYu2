@@ -16,6 +16,7 @@ import com.xianyu2.controller.dto.MsgListReqDTO;
 import com.xianyu2.controller.dto.MsgListRespDTO;
 import com.xianyu2.event.chatMessageEvent.ChatMessageData;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
+import com.xianyu2.event.chatMessageEvent.ChatMessageEventSource;
 import com.xianyu2.service.ChatMessageService;
 import com.xianyu2.service.ChatMessagePersistenceService;
 import com.xianyu2.service.PlatformHistorySyncCoordinator;
@@ -265,7 +266,8 @@ public class ChatMessageServiceImpl implements ChatMessageService {
     private void publishHistoryMessageReceivedEvent(XianyuChatMessage message) {
         ChatMessageData messageData = new ChatMessageData();
         BeanUtils.copyProperties(message, messageData);
-        eventPublisher.publishEvent(new ChatMessageReceivedEvent(this, messageData));
+        eventPublisher.publishEvent(new ChatMessageReceivedEvent(
+                this, messageData, ChatMessageEventSource.PLATFORM_HISTORY));
         log.info("【账号{}】历史消息首次入库并发布接收事件: pnmId={}, sid={}",
                 message.getXianyuAccountId(), message.getPnmId(), message.getSId());
     }

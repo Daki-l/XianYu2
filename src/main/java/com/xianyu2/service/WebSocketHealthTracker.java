@@ -35,6 +35,15 @@ public class WebSocketHealthTracker {
         healthFor(accountId).lastRealtimeSyncAt = now.getAsLong();
     }
 
+    /**
+     * Returns the start time of the currently tracked transport connection.
+     * A missing value means the message cannot be proven to be real-time.
+     */
+    public Long getConnectionEstablishedAt(Long accountId) {
+        AccountHealth health = accounts.get(accountId);
+        return health == null ? null : health.connectionEstablishedAt;
+    }
+
     public void recordSendResult(Long accountId, long attemptStartedAt, boolean success, String failureReason) {
         AccountHealth health = healthFor(accountId);
         long observedAt = now.getAsLong();

@@ -8,7 +8,11 @@ import com.xianyu2.service.ChatMessagePersistenceService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * 会保存所有聊天消息
@@ -33,48 +37,64 @@ public class ChatMessageEventSaveListener {
 
     @Autowired
     private ChatMessagePersistenceService chatMessagePersistenceService;
+
+    private final ConcurrentMap<String, Object> persistenceLocks = new ConcurrentHashMap<>();
     
     /**
      * 处理聊天消息接收事件 - 保存消息到数据库
      * 
      * @param event 聊天消息接收事件
      */
+    @Order(0)
     @EventListener
     public void handleChatMessageReceived(ChatMessageReceivedEvent event) {
         ChatMessageData messageData = event.getMessageData();
-        
-        // 转换为数据库实体
+        if (messageData.getXianyuAccountId() == null || messageData.getPnmId() == null
+                || messageData.getPnmId().isBlank()) {
+            event.markPersistenceResult(false, null);
+            log.warn("[SaveListener]消息缺少账号或平台消息ID，禁止触发后续副作用");
+            return;
+        }
+
+        String lockKey = messageData.getXianyuAccountId() + ":" + messageData.getPnmId();
+        Object lock = persistenceLocks.computeIfAbsent(lockKey, ignored -> new Object());
+        try {
+            synchronized (lock) {
+                persistAndMark(event, messageData);
+            }
+        } catch (Exception e) {
+            event.markPersistenceResult(false, null);
+            log.error("【账号{}】[SaveListener]保存消息异常: pnmId={}",
+                    messageData.getXianyuAccountId(), messageData.getPnmId(), e);
+        } finally {
+            persistenceLocks.remove(lockKey, lock);
+        }
+    }
+
+    private void persistAndMark(ChatMessageReceivedEvent event, ChatMessageData messageData) {
+        XianyuChatMessage existing = chatMessageMapper.findByPnmId(
+                messageData.getXianyuAccountId(), messageData.getPnmId());
+        if (existing != null) {
+            event.markPersistenceResult(false, existing);
+            log.info("【账号{}】[SaveListener]消息已存在，禁止重复副作用: pnmId={}",
+                    messageData.getXianyuAccountId(), messageData.getPnmId());
+            return;
+        }
+
         XianyuChatMessage message = new XianyuChatMessage();
         org.springframework.beans.BeanUtils.copyProperties(messageData, message);
-        
-        log.info("【账号{}】[SaveListener]收到ChatMessageReceivedEvent事件: pnmId={}, contentType={}, msgContent={}, orderId={}", 
-                message.getXianyuAccountId(), message.getPnmId(), message.getContentType(), message.getMsgContent(), messageData.getOrderId());
-        
-        try {
-            // 检查消息是否已存在（去重）
-            XianyuChatMessage existing = chatMessageMapper.findByPnmId(
+        int result = chatMessagePersistenceService.save(message);
+        XianyuChatMessage persisted = chatMessageMapper.findByPnmId(
+                message.getXianyuAccountId(), message.getPnmId());
+        event.markPersistenceResult(result > 0, persisted == null ? message : persisted);
+
+        if (result > 0) {
+            log.info("【账号{}】[SaveListener]消息首次保存成功: pnmId={}, id={}",
+                    message.getXianyuAccountId(), message.getPnmId(),
+                    persisted == null ? message.getId() : persisted.getId());
+        } else {
+            log.info("【账号{}】[SaveListener]消息未首次保存，禁止触发后续副作用: pnmId={}",
                     message.getXianyuAccountId(), message.getPnmId());
-            
-            if (existing != null) {
-                log.info("【账号{}】[SaveListener]消息已存在，跳过保存: pnmId={}", 
-                        message.getXianyuAccountId(), message.getPnmId());
-                return;
-            }
-            
-            // 保存消息到数据库
-            int result = chatMessagePersistenceService.save(message);
-            
-            if (result > 0) {
-                log.info("【账号{}】[SaveListener]消息保存成功: pnmId={}, id={}", 
-                        message.getXianyuAccountId(), message.getPnmId(), message.getId());
-            } else {
-                log.info("【账号{}】[SaveListener]消息已存在，跳过保存: pnmId={}",
-                        message.getXianyuAccountId(), message.getPnmId());
-            }
-            
-        } catch (Exception e) {
-            log.error("【账号{}】[SaveListener]异步保存消息异常: pnmId={}, error={}",
-                    message.getXianyuAccountId(), message.getPnmId(), e.getMessage(), e);
         }
     }
 }

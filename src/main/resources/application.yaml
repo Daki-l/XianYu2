@@ -21,6 +21,8 @@ app:
     max-attempts: ${DELIVERY_MAX_ATTEMPTS:3}
   auto-reply:
     max-message-age-seconds: ${AUTO_REPLY_MAX_MESSAGE_AGE_SECONDS:300}
+  human-intervention:
+    max-message-age-seconds: ${HUMAN_INTERVENTION_MAX_MESSAGE_AGE_SECONDS:300}
   message-history-recovery:
     enabled: ${MESSAGE_HISTORY_RECOVERY_ENABLED:true}
     interval-ms: ${MESSAGE_HISTORY_RECOVERY_INTERVAL_MS:180000}
@@ -101,6 +103,8 @@ websocket:
   credential-refresh-max-minutes: 20
   # 消息过期时间（毫秒，默认5分钟）
   message-expire-time: 300000
+  # 重连补偿判断时允许的平台与本机时钟偏差（秒）
+  catchup-message-clock-skew-seconds: ${WEBSOCKET_CATCHUP_MESSAGE_CLOCK_SKEW_SECONDS:30}
   # 人工接管超时（秒，默认1小时）
   manual-mode-timeout: 3600
   # 人工接管切换关键词

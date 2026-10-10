@@ -7,6 +7,7 @@ import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuChatMessage;
 import com.xianyu2.entity.XianyuHumanInterventionRecord;
+import com.xianyu2.event.chatMessageEvent.ChatMessageEventSource;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuChatMessageMapper;
@@ -171,6 +172,7 @@ class ChatMessageServiceImplTest {
         verify(eventPublisher).publishEvent(event.capture());
         assertEquals("history-message-1", event.getValue().getMessageData().getPnmId());
         assertEquals(createAt, event.getValue().getMessageData().getMessageTime());
+        assertEquals(ChatMessageEventSource.PLATFORM_HISTORY, event.getValue().getReceiptSource());
     }
 
     @Test

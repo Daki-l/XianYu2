@@ -5,7 +5,9 @@ import com.xianyu2.config.WebSocketConfig;
 import com.xianyu2.entity.XianyuChatMessage;
 import com.xianyu2.event.chatMessageEvent.ChatMessageData;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
+import com.xianyu2.event.chatMessageEvent.ChatMessageEventSource;
 import com.xianyu2.service.GoodsInfoService;
+import com.xianyu2.service.WebSocketHealthTracker;
 import com.xianyu2.entity.XianyuGoodsInfo;
 import com.xianyu2.utils.MessageDecryptUtils;
 import com.xianyu2.websocket.WebSocketSyncPayload;
@@ -19,6 +21,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 同步包消息处理器
@@ -43,6 +46,9 @@ public class SyncMessageHandler extends AbstractLwpHandler {
     
     @Autowired
     private WebSocketConfig webSocketConfig;
+
+    @Autowired
+    private WebSocketHealthTracker healthTracker;
     
     private final ObjectMapper objectMapper = new ObjectMapper();
     
@@ -261,8 +267,10 @@ public class SyncMessageHandler extends AbstractLwpHandler {
             // 保存完整消息体
             message.setCompleteMsg(decryptedData);
             
-            // 发布消息接收事件
-            publishChatMessageReceivedEvent(message);
+            // 服务重连时会补推旧消息。来源必须在触发业务监听器前确定，
+            // 不能仅通过发送者身份把旧卖家消息当作新的人工回复。
+            ChatMessageEventSource receiptSource = resolveReceiptSource(message);
+            publishChatMessageReceivedEvent(message, receiptSource);
             
         } catch (Exception e) {
             log.error("【账号{}】解析消息异常: lwp={}, error={}", accountId, lwp, e.getMessage(), e);
@@ -272,7 +280,33 @@ public class SyncMessageHandler extends AbstractLwpHandler {
     /**
      * 发布聊天消息接收事件
      */
-    private void publishChatMessageReceivedEvent(XianyuChatMessage message) {
+    private ChatMessageEventSource resolveReceiptSource(XianyuChatMessage message) {
+        Long accountId = message.getXianyuAccountId();
+        Long messageTime = message.getMessageTime();
+        if (accountId == null || messageTime == null || messageTime <= 0 || healthTracker == null) {
+            log.debug("【账号{}】无法验证同步消息实时性，按补偿回放处理: pnmId={}, messageTime={}",
+                    accountId, message.getPnmId(), messageTime);
+            return ChatMessageEventSource.WEBSOCKET_CATCHUP;
+        }
+
+        Long connectedAt = healthTracker.getConnectionEstablishedAt(accountId);
+        if (connectedAt == null) {
+            log.debug("【账号{}】连接建立时间缺失，按补偿回放处理: pnmId={}", accountId, message.getPnmId());
+            return ChatMessageEventSource.WEBSOCKET_CATCHUP;
+        }
+
+        long allowedClockSkewMillis = TimeUnit.SECONDS.toMillis(
+                Math.max(0, webSocketConfig.getCatchupMessageClockSkewSeconds()));
+        if (messageTime < connectedAt - allowedClockSkewMillis) {
+            log.debug("【账号{}】同步消息早于当前连接，按补偿回放处理: pnmId={}, messageTime={}, connectedAt={}",
+                    accountId, message.getPnmId(), messageTime, connectedAt);
+            return ChatMessageEventSource.WEBSOCKET_CATCHUP;
+        }
+        return ChatMessageEventSource.REALTIME;
+    }
+
+    private void publishChatMessageReceivedEvent(XianyuChatMessage message,
+                                                  ChatMessageEventSource receiptSource) {
         try {
             // 转换为 ChatMessageData
             ChatMessageData messageData = new ChatMessageData();
@@ -295,6 +329,7 @@ public class SyncMessageHandler extends AbstractLwpHandler {
                     "  senderAppV={}\n" +
                     "  senderOsType={}\n" +
                     "  messageTime={}\n" +
+                    "  receiptSource={}\n" +
                     "  orderId={}", 
                     message.getXianyuAccountId(),
                     message.getPnmId(),
@@ -309,13 +344,14 @@ public class SyncMessageHandler extends AbstractLwpHandler {
                     message.getSenderAppV(),
                     message.getSenderOsType(),
                     message.getMessageTime(),
+                    receiptSource,
                     orderId);
             
-            ChatMessageReceivedEvent event = new ChatMessageReceivedEvent(this, messageData);
+            ChatMessageReceivedEvent event = new ChatMessageReceivedEvent(this, messageData, receiptSource);
             eventPublisher.publishEvent(event);
             
-            log.info("【账号{}】ChatMessageReceivedEvent事件已发布: pnmId={}, orderId={}", 
-                    message.getXianyuAccountId(), message.getPnmId(), orderId);
+            log.info("【账号{}】ChatMessageReceivedEvent事件已发布: pnmId={}, orderId={}, receiptSource={}",
+                    message.getXianyuAccountId(), message.getPnmId(), orderId, receiptSource);
         } catch (Exception e) {
             log.error("【账号{}】发布消息接收事件失败: pnmId={}", 
                     message.getXianyuAccountId(), message.getPnmId(), e);

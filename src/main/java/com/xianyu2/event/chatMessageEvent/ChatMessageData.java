@@ -13,6 +13,16 @@ public class ChatMessageData {
      * 消息ID
      */
     private Long id;
+
+    /**
+     * 持久化消息来源，例如 PLATFORM、LOCAL、LOCAL_AI
+     */
+    private String messageSource;
+
+    /**
+     * 平台消息与本地发送记录匹配后的逻辑来源，例如 AI、BACKEND
+     */
+    private String replyOrigin;
     
     /**
      * 闲鱼账号ID

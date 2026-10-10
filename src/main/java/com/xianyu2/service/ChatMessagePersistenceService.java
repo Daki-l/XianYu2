@@ -206,6 +206,13 @@ public class ChatMessagePersistenceService {
         }
         if (replyOrigin != null) {
             messageMapper.markReplyOrigin(platformId, replyOrigin);
+            if (ChatMessageDeduplication.isPlatformCandidate(
+                    message.getContentType(), message.getMessageSource())) {
+                // The current event still owns this in-memory object. Carry the
+                // reconciliation result forward so downstream listeners do not
+                // depend on a second database read to identify a local echo.
+                message.setReplyOrigin(replyOrigin);
+            }
         }
         log.info("跨来源消息去重: accountId={}, sid={}, platformId={}, localId={}, aiReply={}",
                 message.getXianyuAccountId(), message.getSId(), platformId, localId, "AI".equals(replyOrigin));

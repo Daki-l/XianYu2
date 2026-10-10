@@ -63,6 +63,7 @@ class ChatMessagePersistenceServiceTest {
         verify(messageMapper).markDuplicate(200L, 100L);
         verify(messageMapper).markReplyOrigin(100L, "AI");
         assertEquals("PLATFORM", platform.getMessageSource());
+        assertEquals("AI", platform.getReplyOrigin());
         assertTrue(platform.getDedupeFingerprint() != null);
     }
 
@@ -166,6 +167,7 @@ class ChatMessagePersistenceServiceTest {
 
         verify(messageMapper).markDuplicate(200L, 100L);
         verify(messageMapper).markReplyOrigin(100L, "BACKEND");
+        assertEquals("BACKEND", platform.getReplyOrigin());
     }
 
     @Test

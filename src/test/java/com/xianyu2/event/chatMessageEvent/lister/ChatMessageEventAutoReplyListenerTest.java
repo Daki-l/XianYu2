@@ -1,6 +1,7 @@
 package com.xianyu2.event.chatMessageEvent.lister;
 
 import com.xianyu2.event.chatMessageEvent.ChatMessageData;
+import com.xianyu2.event.chatMessageEvent.ChatMessageEventSource;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.service.AccountService;
 import com.xianyu2.service.AutoReplyDelayService;
@@ -16,6 +17,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,9 +50,9 @@ class ChatMessageEventAutoReplyListenerTest {
         ReflectionTestUtils.setField(listener, "buyerProfileService", buyerProfileService);
         ReflectionTestUtils.setField(listener, "maxMessageAgeSeconds", 300L);
 
-        when(accountService.getXianyuUserId(1L)).thenReturn("seller");
-        when(takeoverManager.isTakenOver(1L, "session@goofish")).thenReturn(false);
-        when(autoReplyService.isAutoReplyEnabled(1L, "goods-1")).thenReturn(true);
+        lenient().when(accountService.getXianyuUserId(1L)).thenReturn("seller");
+        lenient().when(takeoverManager.isTakenOver(1L, "session@goofish")).thenReturn(false);
+        lenient().when(autoReplyService.isAutoReplyEnabled(1L, "goods-1")).thenReturn(true);
     }
 
     @Test
@@ -89,8 +91,24 @@ class ChatMessageEventAutoReplyListenerTest {
         verify(autoReplyDelayService, never()).submitDelayTask(message);
     }
 
+    @Test
+    void skipsDelayTaskForPlatformHistoryEvenWhenItIsRecent() {
+        ChatMessageData message = buyerMessage(System.currentTimeMillis() - 30_000L);
+        ChatMessageReceivedEvent event = event(message, ChatMessageEventSource.PLATFORM_HISTORY);
+
+        listener.handleChatMessageReceived(event);
+
+        verify(autoReplyDelayService, never()).submitDelayTask(message);
+    }
+
     private ChatMessageReceivedEvent event(ChatMessageData message) {
-        return new ChatMessageReceivedEvent(this, message);
+        return event(message, ChatMessageEventSource.REALTIME);
+    }
+
+    private ChatMessageReceivedEvent event(ChatMessageData message, ChatMessageEventSource source) {
+        ChatMessageReceivedEvent event = new ChatMessageReceivedEvent(this, message, source);
+        event.markPersistenceResult(true, null);
+        return event;
     }
 
     private ChatMessageData buyerMessage(Long messageTime) {

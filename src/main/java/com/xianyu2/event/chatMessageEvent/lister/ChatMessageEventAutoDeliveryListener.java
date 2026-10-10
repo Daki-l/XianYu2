@@ -73,6 +73,12 @@ public class ChatMessageEventAutoDeliveryListener {
         ChatMessageData message = event.getMessageData();
         Long accountId = message.getXianyuAccountId();
 
+        if (!event.isEligibleForRealtimeSideEffects()) {
+            log.debug("【账号{}】[AutoDeliveryListener]跳过非实时、重复或本地回显消息: pnmId={}, receiptSource={}, newlyPersisted={}",
+                    accountId, message.getPnmId(), event.getReceiptSource(), event.isNewlyPersisted());
+            return;
+        }
+
         log.info("【账号{}】[AutoDeliveryListener]收到事件: pnmId={}, contentType={}, xyGoodsId={}, sId={}, orderId={}",
                 accountId, message.getPnmId(), message.getContentType(),
                 message.getXyGoodsId(), message.getSId(), message.getOrderId());

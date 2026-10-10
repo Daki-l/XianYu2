@@ -54,6 +54,11 @@ public class WebSocketConfig {
      * 参考Python: MESSAGE_EXPIRE_TIME = 300000 (5分钟)
      */
     private long messageExpireTime = 300000L;
+
+    /**
+     * WebSocket 重连后，消息时间早于连接建立时间超过该容差时视为补偿回放。
+     */
+    private int catchupMessageClockSkewSeconds = 30;
     
     /**
      * 人工接管超时（秒）

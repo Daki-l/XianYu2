@@ -6,9 +6,12 @@ import com.xianyu2.service.AccountService;
 import com.xianyu2.service.AutoReplyDelayService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.event.EventListener;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * 人工干预事件监听器
@@ -41,6 +44,9 @@ public class ChatMessageEventHumanInterventionListener {
     @Autowired
     private AccountService accountService;
 
+    @Value("${app.human-intervention.max-message-age-seconds:300}")
+    private long maxMessageAgeSeconds;
+
     /**
      * 处理聊天消息接收事件 - 检测卖家手动回复并触发人工接管
      *
@@ -52,6 +58,14 @@ public class ChatMessageEventHumanInterventionListener {
         ChatMessageData message = event.getMessageData();
 
         try {
+            // 历史同步、重连回放、重复事件和本地发送回显不能重新开启或续期人工接管。
+            if (!event.isEligibleForRealtimeSideEffects()) {
+                log.debug("【账号{}】[HumanInterventionListener]跳过非实时或重复消息: pnmId={}, receiptSource={}, persistenceCompleted={}, newlyPersisted={}, replyOrigin={}",
+                        message.getXianyuAccountId(), message.getPnmId(), event.getReceiptSource(),
+                        event.isPersistenceCompleted(), event.isNewlyPersisted(), message.getReplyOrigin());
+                return;
+            }
+
             // 1. 只处理用户消息（contentType=1）
             if (message.getContentType() == null || message.getContentType() != 1) {
                 return;
@@ -76,8 +90,15 @@ public class ChatMessageEventHumanInterventionListener {
                 return;
             }
 
-            log.info("【账号{}】[HumanInterventionListener]检测到卖家手动回复，触发人工接管: xyGoodsId={}, sId={}, content={}",
-                    message.getXianyuAccountId(), message.getXyGoodsId(), message.getSId(), message.getMsgContent());
+            if (!isRecentMessage(message)) {
+                log.info("【账号{}】[HumanInterventionListener]卖家消息已过期或缺少消息时间，跳过人工接管: pnmId={}, sId={}, messageTime={}, maxAgeSeconds={}",
+                        message.getXianyuAccountId(), message.getPnmId(), message.getSId(),
+                        message.getMessageTime(), maxMessageAgeSeconds);
+                return;
+            }
+
+            log.info("【账号{}】[HumanInterventionListener]检测到实时卖家手动回复，触发人工接管: pnmId={}, xyGoodsId={}, sId={}",
+                    message.getXianyuAccountId(), message.getPnmId(), message.getXyGoodsId(), message.getSId());
 
             // 4. 触发人工接管（内部会检查人工干预开关、标记接管、取消待执行延时任务）
             autoReplyDelayService.recordSellerManualReply(
@@ -90,5 +111,14 @@ public class ChatMessageEventHumanInterventionListener {
             log.error("【账号{}】处理人工干预事件异常: pnmId={}",
                     message.getXianyuAccountId(), message.getPnmId(), e);
         }
+    }
+
+    private boolean isRecentMessage(ChatMessageData message) {
+        Long messageTime = message.getMessageTime();
+        if (messageTime == null || messageTime <= 0) {
+            return false;
+        }
+        long maxAgeMillis = TimeUnit.SECONDS.toMillis(Math.max(0, maxMessageAgeSeconds));
+        return messageTime >= System.currentTimeMillis() - maxAgeMillis;
     }
 }
