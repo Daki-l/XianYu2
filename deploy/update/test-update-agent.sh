@@ -1138,7 +1138,7 @@ test_installer_enables_boot_recovery_service() {
     || fail 'Update agent installer does not install the slow-transfer total-timeout default'
   grep -Fx 'systemctl enable xianyu2-update-agent.service xianyu2-update-agent.path' "$installer" >/dev/null \
     || fail 'Update agent installer does not enable the boot recovery service'
-  grep -Fx 'systemctl start xianyu2-update-agent.service' "$installer" >/dev/null \
+  grep -Fx '  systemctl start xianyu2-update-agent.service' "$installer" >/dev/null \
     || fail 'Update agent installer does not start the recovery service'
   grep -Fq 'XIANYU2_UPDATE_AGENT_SELF_UPDATE' "$installer" \
     || fail 'Update agent installer can deadlock by starting its own active service'
