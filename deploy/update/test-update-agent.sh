@@ -35,6 +35,7 @@ done
 
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
+current_test_case=''
 
 report_github_actions_error() {
   local message="$1"
@@ -53,7 +54,11 @@ fail() {
 
 on_unexpected_error() {
   local exit_code=$?
-  report_github_actions_error "Unexpected test command failure at line ${BASH_LINENO[0]} (exit ${exit_code})."
+  local test_context=''
+  if [[ -n "$current_test_case" ]]; then
+    test_context=" while running ${current_test_case}"
+  fi
+  report_github_actions_error "Unexpected test command failure${test_context} at line ${BASH_LINENO[0]} (exit ${exit_code})."
   exit "$exit_code"
 }
 
@@ -1140,8 +1145,10 @@ test_installer_enables_boot_recovery_service() {
 }
 
 run_case() {
-  printf 'Running update agent test: %s\n' "$1"
-  "$1"
+  current_test_case="$1"
+  printf 'Running update agent test: %s\n' "$current_test_case"
+  "$current_test_case"
+  current_test_case=''
 }
 
 run_jar_download_live_progress_test() {
