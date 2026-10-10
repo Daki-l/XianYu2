@@ -67,6 +67,10 @@ public interface XianyuGoodsAutoReplyRecordMapper {
             "WHERE xianyu_account_id = #{accountId} AND s_id = #{sId} AND state = 0")
     int cancelPendingBySession(@Param("accountId") Long accountId, @Param("sId") String sId);
 
+    @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, status_time = NOW(3), lease_owner = NULL, lease_expire_time = NULL " +
+            "WHERE xianyu_account_id = #{accountId} AND s_id = #{sId} AND state IN (0, 2)")
+    int cancelActiveBySession(@Param("accountId") Long accountId, @Param("sId") String sId);
+
     @Update("UPDATE xianyu_goods_auto_reply_record SET state = -2, status_time = NOW(3), lease_owner = NULL, lease_expire_time = NULL WHERE id = #{id} AND state IN (0, 2)")
     int cancelById(@Param("id") Long id);
 

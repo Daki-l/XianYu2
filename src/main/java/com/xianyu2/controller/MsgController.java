@@ -1,6 +1,7 @@
 package com.xianyu2.controller;
 
 import com.xianyu2.common.ResultObject;
+import com.xianyu2.controller.dto.EndHumanTakeoverReqDTO;
 import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgListReqDTO;
 import com.xianyu2.controller.dto.MsgListRespDTO;
@@ -57,6 +58,17 @@ public class MsgController {
         } catch (Exception e) {
             log.error("查询上下文消息失败", e);
             return ResultObject.failed("查询上下文消息失败: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/human-takeover/end")
+    public ResultObject<?> endHumanTakeover(@RequestBody EndHumanTakeoverReqDTO reqDTO) {
+        try {
+            return chatMessageService.endHumanTakeover(reqDTO);
+        } catch (Exception e) {
+            log.error("强制结束人工接管失败: accountId={}, sid={}",
+                    reqDTO == null ? null : reqDTO.getXianyuAccountId(), reqDTO == null ? null : reqDTO.getSid(), e);
+            return ResultObject.failed("强制结束人工接管失败: " + e.getMessage());
         }
     }
 

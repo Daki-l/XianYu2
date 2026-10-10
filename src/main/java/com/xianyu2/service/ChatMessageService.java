@@ -2,6 +2,7 @@ package com.xianyu2.service;
 
 import com.xianyu2.common.ResultObject;
 import com.xianyu2.entity.XianyuChatMessage;
+import com.xianyu2.controller.dto.EndHumanTakeoverReqDTO;
 import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgListReqDTO;
 import com.xianyu2.controller.dto.MsgListRespDTO;
@@ -48,6 +49,11 @@ public interface ChatMessageService {
      * @return 消息列表
      */
     ResultObject<?> getContextMessages(MsgContextReqDTO reqDTO);
+
+    /**
+     * 强制结束指定会话的人工接管，不会触发或补发 AI 回复。
+     */
+    ResultObject<?> endHumanTakeover(EndHumanTakeoverReqDTO reqDTO);
 
     /**
      * 从平台同步指定会话历史消息

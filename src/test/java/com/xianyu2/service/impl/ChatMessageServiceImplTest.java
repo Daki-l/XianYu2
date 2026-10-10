@@ -1,16 +1,20 @@
 package com.xianyu2.service.impl;
 
 import com.xianyu2.common.ResultObject;
+import com.xianyu2.controller.dto.EndHumanTakeoverReqDTO;
 import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuChatMessage;
+import com.xianyu2.entity.XianyuHumanInterventionRecord;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuChatMessageMapper;
 import com.xianyu2.mapper.XianyuGoodsAutoReplyRecordMapper;
+import com.xianyu2.mapper.XianyuHumanInterventionRecordMapper;
 import com.xianyu2.service.ChatMessagePersistenceService;
 import com.xianyu2.service.WebSocketService;
+import com.xianyu2.service.reply.HumanTakeoverManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,14 +25,17 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -40,6 +47,8 @@ class ChatMessageServiceImplTest {
     @Mock
     private XianyuGoodsAutoReplyRecordMapper autoReplyRecordMapper;
     @Mock
+    private XianyuHumanInterventionRecordMapper interventionRecordMapper;
+    @Mock
     private ChatMessagePersistenceService persistenceService;
     @Mock
     private XianyuAccountMapper accountMapper;
@@ -47,6 +56,8 @@ class ChatMessageServiceImplTest {
     private WebSocketService webSocketService;
     @Mock
     private ApplicationEventPublisher eventPublisher;
+    @Mock
+    private HumanTakeoverManager takeoverManager;
 
     private ChatMessageServiceImpl service;
 
@@ -55,6 +66,8 @@ class ChatMessageServiceImplTest {
         service = new ChatMessageServiceImpl();
         ReflectionTestUtils.setField(service, "chatMessageMapper", messageMapper);
         ReflectionTestUtils.setField(service, "autoReplyRecordMapper", autoReplyRecordMapper);
+        ReflectionTestUtils.setField(service, "interventionRecordMapper", interventionRecordMapper);
+        ReflectionTestUtils.setField(service, "takeoverManager", takeoverManager);
         ReflectionTestUtils.setField(service, "chatMessagePersistenceService", persistenceService);
         ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
         ReflectionTestUtils.setField(service, "webSocketService", webSocketService);
@@ -83,6 +96,53 @@ class ChatMessageServiceImplTest {
         @SuppressWarnings("unchecked")
         List<MsgDTO> timeline = (List<MsgDTO>) response.getData();
         assertEquals(List.of(3L, 7L, 9L), timeline.stream().map(MsgDTO::getId).toList());
+    }
+
+    @Test
+    void activeHumanTakeoverIsExposedAsVirtualTimelineItem() {
+        XianyuHumanInterventionRecord takeover = new XianyuHumanInterventionRecord();
+        takeover.setId(12L);
+        takeover.setSId("sid@goofish");
+        takeover.setXyGoodsId("goods-1");
+        takeover.setCreatedTime(LocalDateTime.of(2026, 10, 9, 12, 0));
+        takeover.setEndTime(LocalDateTime.of(2026, 10, 9, 12, 10));
+        when(interventionRecordMapper.findActiveByAccountAndSId(1L, "sid@goofish")).thenReturn(takeover);
+
+        MsgContextReqDTO request = new MsgContextReqDTO();
+        request.setXianyuAccountId(1L);
+        request.setSid("sid@goofish");
+        request.setOffset(0);
+
+        ResultObject<?> response = service.getContextMessages(request);
+
+        @SuppressWarnings("unchecked")
+        List<MsgDTO> timeline = (List<MsgDTO>) response.getData();
+        MsgDTO status = timeline.stream()
+                .filter(message -> "HUMAN_TAKEOVER".equals(message.getTimelineType()))
+                .findFirst()
+                .orElseThrow();
+        assertEquals("sid@goofish", status.getSId());
+        assertEquals("goods-1", status.getXyGoodsId());
+        assertEquals(takeover.getEndTime(), status.getTakeoverEndTime());
+        assertNotNull(status.getMessageTime());
+    }
+
+    @Test
+    void forceEndingHumanTakeoverDoesNotCreateOrSendAnAutoReply() {
+        EndHumanTakeoverReqDTO request = new EndHumanTakeoverReqDTO();
+        request.setXianyuAccountId(1L);
+        request.setSid("sid@goofish");
+        when(takeoverManager.endTakeover(1L, "sid@goofish")).thenReturn(false);
+
+        ResultObject<?> response = service.endHumanTakeover(request);
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> data = (Map<String, Object>) response.getData();
+        assertEquals(true, data.get("ended"));
+        assertEquals(false, data.get("changed"));
+        assertEquals("人工接管已强制结束", data.get("message"));
+        verify(takeoverManager).endTakeover(1L, "sid@goofish");
+        verifyNoInteractions(autoReplyRecordMapper, persistenceService, webSocketService, eventPublisher);
     }
 
     @Test

@@ -18,6 +18,10 @@ public interface XianyuHumanInterventionRecordMapper {
     XianyuHumanInterventionRecord findActiveByAccountAndSId(@Param("accountId") Long accountId,
                                                              @Param("sId") String sId);
 
+    @Update("UPDATE xianyu_human_intervention_record SET end_time = NOW(3) " +
+            "WHERE xianyu_account_id = #{accountId} AND s_id = #{sId} AND end_time > NOW(3)")
+    int endActiveByAccountAndSId(@Param("accountId") Long accountId, @Param("sId") String sId);
+
     @Select("SELECT COUNT(*) FROM xianyu_human_intervention_record WHERE end_time > NOW(3)")
     int countActive();
 

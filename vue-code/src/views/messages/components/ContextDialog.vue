@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, computed, onMounted, onUnmounted } from 'vue'
-import { getContextMessages } from '@/api/message'
+import { endHumanTakeover, getContextMessages } from '@/api/message'
 import type { ChatMessage } from '@/api/message'
 import { sendMessage as sendMessageApi } from '@/api/message'
 import { sendImageMessage as sendImageMessageApi } from '@/api/image'
 import { toast } from '@/utils/toast'
+import { showConfirm } from '@/utils/confirm'
 import IconUser from '@/components/icons/IconUser.vue'
 import IconEmpty from '@/components/icons/IconEmpty.vue'
 import IconSend from '@/components/icons/IconSend.vue'
@@ -29,8 +30,10 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const messages = ref<ChatMessage[]>([])
+const takeoverOperationResults = ref<ChatMessage[]>([])
 const inputText = ref('')
 const sending = ref(false)
+const endingHumanTakeover = ref(false)
 const inputImageUrls = ref('')
 const showImageUploader = ref(false)
 const messageListRef = ref<HTMLElement | null>(null)
@@ -56,10 +59,14 @@ onUnmounted(() => {
   if (countdownTimer) clearInterval(countdownTimer)
 })
 
-const totalCount = computed(() => messages.value.length)
-const hasActiveAutoReply = computed(() => messages.value.some(message =>
-  message.timelineType === 'AI_PENDING' || message.timelineType === 'AI_PROCESSING'
+const hasActiveTimelineStatus = computed(() => messages.value.some(message =>
+  message.timelineType === 'AI_PENDING'
+  || message.timelineType === 'AI_PROCESSING'
+  || message.timelineType === 'HUMAN_TAKEOVER'
 ))
+const timelineMessages = computed(() => [...messages.value, ...takeoverOperationResults.value]
+  .sort((left, right) => Number(left.messageTime) - Number(right.messageTime)))
+const totalCount = computed(() => timelineMessages.value.length)
 
 const handleClose = () => {
   emit('update:visible', false)
@@ -148,14 +155,15 @@ const loadMore = async () => {
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 let countdownTimer: ReturnType<typeof setInterval> | null = null
-let lastActiveRefreshAt = 0
+let lastRefreshAt = 0
 
 const startRefresh = () => {
   stopRefresh()
   refreshTimer = setInterval(() => {
     if (props.visible && props.sid) {
-      if (!hasActiveAutoReply.value || Date.now() - lastActiveRefreshAt >= 2000) {
-        if (hasActiveAutoReply.value) lastActiveRefreshAt = Date.now()
+      const refreshInterval = hasActiveTimelineStatus.value ? 5000 : 10000
+      if (Date.now() - lastRefreshAt >= refreshInterval) {
+        lastRefreshAt = Date.now()
         refreshMessages()
       }
     }
@@ -190,11 +198,17 @@ const refreshMessages = async () => {
 
 watch(() => props.visible, (newVal) => {
   if (newVal && props.sid) {
+    takeoverOperationResults.value = []
     loadContext()
     startRefresh()
   } else {
     stopRefresh()
+    takeoverOperationResults.value = []
   }
+})
+
+watch([() => props.xianyuAccountId, () => props.sid], () => {
+  takeoverOperationResults.value = []
 })
 
 const formatTime = (timestamp: string | number) => {
@@ -233,6 +247,8 @@ const getMessageType = (msg: ChatMessage) => {
   if (msg.timelineType === 'AI_PROCESSING') return 'AI 回复生成中'
   if (msg.timelineType === 'AI_FAILED') return 'AI 回复失败'
   if (msg.timelineType === 'AI_CANCELLED') return 'AI 回复已取消'
+  if (msg.timelineType === 'HUMAN_TAKEOVER') return '人工接管中'
+  if (msg.timelineType === 'HUMAN_TAKEOVER_ENDED') return '人工接管已强制结束'
   if (msg.replyOrigin === 'AI' || msg.messageSource === 'LOCAL_AI') return 'AI回复'
   if (msg.replyOrigin === 'BACKEND') return '后台回复'
   if (msg.contentType === 1 && msg.senderUserId === props.currentAccountUnb) return 'App回复'
@@ -248,6 +264,65 @@ const countdown = (msg: ChatMessage) => {
   const timestamp = new Date(msg.scheduledTime.replace(' ', 'T')).getTime()
   if (Number.isNaN(timestamp)) return '稍后'
   return `${Math.max(0, Math.ceil((timestamp - now.value) / 1000))} 秒`
+}
+
+const takeoverCountdown = (msg: ChatMessage) => {
+  if (!msg.takeoverEndTime) return '稍后'
+  const timestamp = new Date(msg.takeoverEndTime.replace(' ', 'T')).getTime()
+  if (Number.isNaN(timestamp)) return '稍后'
+  const seconds = Math.max(0, Math.ceil((timestamp - now.value) / 1000))
+  return seconds > 0 ? `${seconds} 秒` : '即将结束'
+}
+
+const createTakeoverOperationResult = (accountId: number, sid: string): ChatMessage => ({
+  id: -Date.now(),
+  xianyuAccountId: accountId,
+  lwp: '',
+  pnmId: '',
+  sid,
+  contentType: 0,
+  msgContent: '',
+  senderUserName: '',
+  senderUserId: '',
+  senderAppV: '',
+  senderOsType: '',
+  reminderUrl: '',
+  xyGoodsId: props.xyGoodsId || '',
+  completeMsg: '',
+  messageTime: Date.now(),
+  createTime: '',
+  timelineType: 'HUMAN_TAKEOVER_ENDED',
+  statusReason: '已强制结束人工接管。此前消息不会自动回复，后续新买家消息将按当前规则处理。'
+})
+
+const forceEndHumanTakeover = async () => {
+  if (endingHumanTakeover.value || !props.xianyuAccountId || !props.sid) return
+
+  try {
+    await showConfirm(
+      '结束后，此前消息不会自动回复；后续新买家消息将按当前自动回复设置处理。',
+      '强制结束人工接管'
+    )
+  } catch {
+    return
+  }
+
+  const accountId = props.xianyuAccountId
+  const sid = props.sid
+  endingHumanTakeover.value = true
+  try {
+    await endHumanTakeover({ xianyuAccountId: accountId, sid })
+    await loadContext()
+    if (props.xianyuAccountId === accountId && props.sid === sid) {
+      takeoverOperationResults.value = [createTakeoverOperationResult(accountId, sid)]
+      scrollToBottom()
+    }
+    toast.success('人工接管已强制结束')
+  } catch (error: any) {
+    if (!error?.messageShown) toast.error(error?.message || '强制结束人工接管失败')
+  } finally {
+    endingHumanTakeover.value = false
+  }
 }
 
 const handleSend = async () => {
@@ -335,9 +410,9 @@ const handleSend = async () => {
               <template v-else>
                 <div v-if="loadingMore" class="loading-more">加载更多...</div>
                 
-                <div v-if="messages.length > 0" class="message-list">
-                  <div
-                    v-for="msg in messages"
+                  <div v-if="timelineMessages.length > 0" class="message-list">
+                    <div
+                     v-for="msg in timelineMessages"
                     :key="msg.id"
                     class="message-item"
                     :class="{
@@ -346,7 +421,41 @@ const handleSend = async () => {
                       'message-item--system': isSystemMessage(msg)
                     }"
                   >
-                    <template v-if="isSystemMessage(msg)">
+                    <template v-if="msg.timelineType === 'HUMAN_TAKEOVER'">
+                      <div class="human-takeover-card">
+                        <div class="human-takeover-card__header">
+                          <div>
+                            <strong>人工接管中</strong>
+                            <span>AI 自动回复已暂停</span>
+                          </div>
+                          <div class="human-takeover-card__control">
+                            <span>结束接管</span>
+                            <button
+                              class="human-takeover-switch"
+                              type="button"
+                              role="switch"
+                              :aria-checked="true"
+                              aria-label="强制结束人工接管"
+                              title="强制结束人工接管"
+                              :disabled="endingHumanTakeover"
+                              @click="forceEndHumanTakeover"
+                            ><span></span></button>
+                          </div>
+                        </div>
+                        <p>距离人工接管结束还有 {{ takeoverCountdown(msg) }}</p>
+                        <time>{{ formatTime(msg.messageTime) }}</time>
+                      </div>
+                    </template>
+
+                    <template v-else-if="msg.timelineType === 'HUMAN_TAKEOVER_ENDED'">
+                      <div class="human-takeover-result">
+                        <strong>{{ getMessageType(msg) }}</strong>
+                        <p>{{ msg.statusReason }}</p>
+                        <time>{{ formatTime(msg.messageTime) }}</time>
+                      </div>
+                    </template>
+
+                    <template v-else-if="isSystemMessage(msg)">
                       <div class="system-text">{{ getMessageType(msg) || msg.msgContent.replace(/^\[|\]$/g, '') }}</div>
                       <div v-if="msg.statusReason" class="system-text system-text--reason">{{ msg.statusReason }}</div>
                     </template>
@@ -679,6 +788,107 @@ const handleSend = async () => {
   padding: 4px 10px;
   background: rgba(255,255,255,0.38);
   border-radius: 10px;
+}
+
+.human-takeover-card,
+.human-takeover-result {
+  width: min(100%, 460px);
+  padding: 11px 12px;
+  border: 1px solid #f6c86b;
+  border-radius: 6px;
+  color: #78350f;
+  background: #fffbeb;
+}
+
+.human-takeover-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.human-takeover-card__header > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.human-takeover-card strong,
+.human-takeover-result strong {
+  font-size: 12px;
+}
+
+.human-takeover-card__header > div:first-child span,
+.human-takeover-card p,
+.human-takeover-card time,
+.human-takeover-result p,
+.human-takeover-result time {
+  color: #92400e;
+  font-size: 11px;
+}
+
+.human-takeover-card p,
+.human-takeover-result p {
+  margin: 8px 0 0;
+  line-height: 1.5;
+}
+
+.human-takeover-card time,
+.human-takeover-result time {
+  display: block;
+  margin-top: 5px;
+  color: #b45309;
+}
+
+.human-takeover-card__control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  color: #92400e;
+  font-size: 11px;
+}
+
+.human-takeover-switch {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  background: #d97706;
+  cursor: pointer;
+}
+
+.human-takeover-switch span {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.human-takeover-switch:hover:not(:disabled) {
+  background: #b45309;
+}
+
+.human-takeover-switch:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+
+.human-takeover-result {
+  border-color: #b8e0c5;
+  color: #166534;
+  background: #f0fdf4;
+}
+
+.human-takeover-result p,
+.human-takeover-result time {
+  color: #166534;
 }
 
 .empty-context {

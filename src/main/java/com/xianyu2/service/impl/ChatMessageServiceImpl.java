@@ -4,9 +4,12 @@ import com.xianyu2.common.ResultObject;
 import com.xianyu2.entity.XianyuAccount;
 import com.xianyu2.entity.XianyuChatMessage;
 import com.xianyu2.entity.XianyuGoodsAutoReplyRecord;
+import com.xianyu2.entity.XianyuHumanInterventionRecord;
 import com.xianyu2.mapper.XianyuAccountMapper;
 import com.xianyu2.mapper.XianyuChatMessageMapper;
 import com.xianyu2.mapper.XianyuGoodsAutoReplyRecordMapper;
+import com.xianyu2.mapper.XianyuHumanInterventionRecordMapper;
+import com.xianyu2.controller.dto.EndHumanTakeoverReqDTO;
 import com.xianyu2.controller.dto.MsgContextReqDTO;
 import com.xianyu2.controller.dto.MsgDTO;
 import com.xianyu2.controller.dto.MsgListReqDTO;
@@ -17,6 +20,7 @@ import com.xianyu2.service.ChatMessageService;
 import com.xianyu2.service.ChatMessagePersistenceService;
 import com.xianyu2.service.PlatformHistoryMessageParser;
 import com.xianyu2.service.WebSocketService;
+import com.xianyu2.service.reply.HumanTakeoverManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,6 +33,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 聊天消息服务实现
@@ -40,6 +45,8 @@ import java.util.List;
 @Service
 public class ChatMessageServiceImpl implements ChatMessageService {
 
+    private static final long HUMAN_TAKEOVER_TIMELINE_ID_BASE = -1_000_000_000_000L;
+
     private static final Comparator<MsgDTO> TIMELINE_ASC = Comparator
             .comparing(MsgDTO::getMessageTime, Comparator.nullsLast(Comparator.naturalOrder()))
             .thenComparing(MsgDTO::getId, Comparator.nullsLast(Comparator.naturalOrder()));
@@ -49,6 +56,12 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
     @Autowired
     private XianyuGoodsAutoReplyRecordMapper autoReplyRecordMapper;
+
+    @Autowired
+    private XianyuHumanInterventionRecordMapper interventionRecordMapper;
+
+    @Autowired
+    private HumanTakeoverManager takeoverManager;
 
     @Autowired
     private ChatMessagePersistenceService chatMessagePersistenceService;
@@ -178,6 +191,11 @@ public class ChatMessageServiceImpl implements ChatMessageService {
                         reqDTO.getXianyuAccountId(), reqDTO.getSid())) {
                     msgDTOList.add(toAutoReplyStatusDto(record));
                 }
+                XianyuHumanInterventionRecord takeoverRecord = interventionRecordMapper.findActiveByAccountAndSId(
+                        reqDTO.getXianyuAccountId(), reqDTO.getSid());
+                if (takeoverRecord != null) {
+                    msgDTOList.add(toHumanTakeoverStatusDto(takeoverRecord));
+                }
             }
 
             // The context API always returns a chronological timeline. Paging still selects from newest to oldest.
@@ -189,6 +207,22 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             log.error("查询上下文消息失败: sid={}", reqDTO.getSid(), e);
             return ResultObject.failed("查询上下文消息失败: " + e.getMessage());
         }
+    }
+
+    @Override
+    public ResultObject<?> endHumanTakeover(EndHumanTakeoverReqDTO reqDTO) {
+        if (reqDTO == null || reqDTO.getXianyuAccountId() == null || reqDTO.getSid() == null || reqDTO.getSid().isBlank()) {
+            return ResultObject.validateFailed("xianyuAccountId和sid不能为空");
+        }
+        if (accountMapper.selectById(reqDTO.getXianyuAccountId()) == null) {
+            return ResultObject.validateFailed("账号不存在或无权访问");
+        }
+
+        boolean changed = takeoverManager.endTakeover(reqDTO.getXianyuAccountId(), reqDTO.getSid());
+        return ResultObject.success(Map.of(
+                "ended", true,
+                "changed", changed,
+                "message", "人工接管已强制结束"));
     }
 
     @Override
@@ -267,6 +301,19 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             status.setStatusReason("SERVICE_RESTART".equals(record.getLastErrorCode())
                     ? "服务重启，AI回复已取消" : null);
         }
+        return status;
+    }
+
+    private MsgDTO toHumanTakeoverStatusDto(XianyuHumanInterventionRecord record) {
+        MsgDTO status = new MsgDTO();
+        long recordId = record.getId() == null ? 0L : record.getId();
+        status.setId(HUMAN_TAKEOVER_TIMELINE_ID_BASE - recordId);
+        status.setSId(record.getSId());
+        status.setXyGoodsId(record.getXyGoodsId());
+        status.setTimelineType("HUMAN_TAKEOVER");
+        status.setMessageTime(toEpochMillis(record.getCreatedTime()));
+        status.setTakeoverEndTime(record.getEndTime());
+        status.setStatusReason("商家手动回复后，AI 自动回复已暂停");
         return status;
     }
 

@@ -60,6 +60,7 @@ public class MsgDTO {
     private String timelineType;
     private Long autoReplyRecordId;
     private LocalDateTime scheduledTime;
+    private LocalDateTime takeoverEndTime;
     private String statusReason;
 }
 

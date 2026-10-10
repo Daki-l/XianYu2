@@ -99,6 +99,21 @@ public class HumanTakeoverManager {
     }
 
     /**
+     * 强制结束指定会话的人工接管。
+     *
+     * <p>数据库更新成功后必须同步移除本进程中的热点缓存；否则后续买家消息会继续命中旧的
+     * 过期时间，直到原定接管结束才重新进入自动回复流程。</p>
+     *
+     * @return 是否实际结束了一条仍处于活跃状态的接管记录；重复结束仍是成功的幂等操作
+     */
+    public boolean endTakeover(Long accountId, String sId) {
+        int affected = interventionRecordMapper.endActiveByAccountAndSId(accountId, sId);
+        takeoverMap.remove(buildKey(accountId, sId));
+        log.info("【账号{}】强制结束人工接管: sId={}, changed={}", accountId, sId, affected > 0);
+        return affected > 0;
+    }
+
+    /**
      * 检查会话是否处于人工接管中
      *
      * <p>如果接管已过期，自动移除标记并返回false</p>

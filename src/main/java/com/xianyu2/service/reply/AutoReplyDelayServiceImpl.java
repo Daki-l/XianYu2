@@ -187,12 +187,16 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
     @Override
     public void cancelDelayTask(Long accountId, String sId) {
         if (accountId == null || sId == null) return;
+        cancelScheduledTask(accountId, sId);
+        autoReplyRecordMapper.cancelPendingBySession(accountId, sId);
+    }
+
+    private void cancelScheduledTask(Long accountId, String sId) {
         String taskKey = buildTaskKey(accountId, sId);
         ScheduledFuture<?> future = pendingTasks.remove(taskKey);
         if (future != null && !future.isDone()) {
             future.cancel(false);
         }
-        autoReplyRecordMapper.cancelPendingBySession(accountId, sId);
     }
     
     @Override
@@ -229,8 +233,9 @@ public class AutoReplyDelayServiceImpl implements AutoReplyDelayService {
         int minutes = configProvider.getInterventionMinutes(accountId, xyGoodsId);
         takeoverManager.takeover(accountId, xyGoodsId, sId, minutes);
 
-        // 立即取消该会话的延时任务和待处理消息
-        cancelDelayTask(accountId, sId);
+        // 人工接管需要同时作废等待中和已领取的任务，避免已经被工作线程领取的旧消息继续发送。
+        cancelScheduledTask(accountId, sId);
+        autoReplyRecordMapper.cancelActiveBySession(accountId, sId);
         pendingMessages.remove(buildTaskKey(accountId, sId));
 
         log.info("【账号{}】卖家手动回复，人工接管: sId={}, xyGoodsId={}, {}分钟后恢复", accountId, sId, xyGoodsId, minutes);

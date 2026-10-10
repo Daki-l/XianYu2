@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMessageManager } from './useMessageManager'
 import {
+  endHumanTakeover,
   getContextMessages,
   getConversationProfiles,
   sendMessage,
@@ -12,7 +13,7 @@ import {
 import { sendImageMessage } from '@/api/image'
 import { getKeywordReplyRules } from '@/api/keywordReply'
 import MultiImageUploader from '@/components/MultiImageUploader.vue'
-import { showError, showSuccess, showWarning } from '@/utils'
+import { showConfirm, showError, showSuccess, showWarning } from '@/utils'
 import '@/styles/merchant-workbench.css'
 
 const {
@@ -34,6 +35,7 @@ const profiles = ref<Record<string, ConversationProfile>>({})
 const loadedProfileKeys = ref(new Set<string>())
 const failedImages = ref(new Set<string>())
 const contextMessages = ref<ChatMessage[]>([])
+const takeoverOperationResults = ref<ChatMessage[]>([])
 const contextLoading = ref(false)
 const platformSyncing = ref(false)
 const synchronizedSessions = ref(new Set<string>())
@@ -41,6 +43,7 @@ const messageText = ref('')
 const imageUrls = ref('')
 const showImageUploader = ref(false)
 const sending = ref(false)
+const endingHumanTakeover = ref(false)
 const refreshing = ref(false)
 const quickReplies = ref<string[]>([])
 const messagesRef = ref<HTMLElement>()
@@ -61,15 +64,21 @@ const imageAvailable = (url?: string) => Boolean(url && !failedImages.value.has(
 const isImageMessage = (message: ChatMessage) => [2, 887, 997].includes(message.contentType)
 const isTimelineStatus = (message: ChatMessage) => Boolean(message.timelineType && message.timelineType !== 'MESSAGE')
 const isSystemMessage = (message: ChatMessage) => isTimelineStatus(message) || ![1, 2, 887, 888, 997, 999].includes(message.contentType)
-const hasActiveAutoReply = computed(() => contextMessages.value.some(message =>
-  message.timelineType === 'AI_PENDING' || message.timelineType === 'AI_PROCESSING'
+const hasActiveTimelineStatus = computed(() => contextMessages.value.some(message =>
+  message.timelineType === 'AI_PENDING'
+  || message.timelineType === 'AI_PROCESSING'
+  || message.timelineType === 'HUMAN_TAKEOVER'
 ))
+const timelineMessages = computed(() => [...contextMessages.value, ...takeoverOperationResults.value]
+  .sort((left, right) => Number(left.messageTime) - Number(right.messageTime)))
 
 const statusLabel = (message: ChatMessage) => {
   if (message.timelineType === 'AI_PENDING') return `AI 回复将在 ${countdown(message)} 后生成`
   if (message.timelineType === 'AI_PROCESSING') return 'AI 回复生成中'
   if (message.timelineType === 'AI_FAILED') return 'AI 回复失败'
   if (message.timelineType === 'AI_CANCELLED') return 'AI 回复已取消'
+  if (message.timelineType === 'HUMAN_TAKEOVER') return '人工接管中'
+  if (message.timelineType === 'HUMAN_TAKEOVER_ENDED') return '人工接管已强制结束'
   return ''
 }
 
@@ -78,6 +87,65 @@ const countdown = (message: ChatMessage) => {
   const timestamp = new Date(message.scheduledTime.replace(' ', 'T')).getTime()
   if (Number.isNaN(timestamp)) return '稍后'
   return `${Math.max(0, Math.ceil((timestamp - now.value) / 1000))} 秒`
+}
+
+const takeoverCountdown = (message: ChatMessage) => {
+  if (!message.takeoverEndTime) return '稍后'
+  const timestamp = new Date(message.takeoverEndTime.replace(' ', 'T')).getTime()
+  if (Number.isNaN(timestamp)) return '稍后'
+  const seconds = Math.max(0, Math.ceil((timestamp - now.value) / 1000))
+  return seconds > 0 ? `${seconds} 秒` : '即将结束'
+}
+
+const createTakeoverOperationResult = (accountId: number, sid: string): ChatMessage => ({
+  id: -Date.now(),
+  xianyuAccountId: accountId,
+  lwp: '',
+  pnmId: '',
+  sid,
+  contentType: 0,
+  msgContent: '',
+  senderUserName: '',
+  senderUserId: '',
+  senderAppV: '',
+  senderOsType: '',
+  reminderUrl: '',
+  xyGoodsId: selected.value?.latest.xyGoodsId || '',
+  completeMsg: '',
+  messageTime: Date.now(),
+  createTime: '',
+  timelineType: 'HUMAN_TAKEOVER_ENDED',
+  statusReason: '已强制结束人工接管。此前消息不会自动回复，后续新买家消息将按当前规则处理。'
+})
+
+const forceEndHumanTakeover = async () => {
+  if (endingHumanTakeover.value || !selectedAccountId.value || !selected.value) return
+
+  try {
+    await showConfirm(
+      '结束后，此前消息不会自动回复；后续新买家消息将按当前自动回复设置处理。',
+      '强制结束人工接管'
+    )
+  } catch {
+    return
+  }
+
+  const accountId = selectedAccountId.value
+  const sid = selected.value.sid
+  endingHumanTakeover.value = true
+  try {
+    await endHumanTakeover({ xianyuAccountId: accountId, sid })
+    await loadConversationContext(false, false)
+    if (selectedAccountId.value === accountId && selected.value?.sid === sid) {
+      takeoverOperationResults.value = [createTakeoverOperationResult(accountId, sid)]
+      await scrollToBottom()
+    }
+    showSuccess('人工接管已强制结束')
+  } catch (error: any) {
+    if (!error?.messageShown) showError(error?.message || '强制结束人工接管失败')
+  } finally {
+    endingHumanTakeover.value = false
+  }
 }
 
 const senderLabel = (message: ChatMessage) => {
@@ -246,10 +314,12 @@ watch(selectedAccountId, () => {
   loadedProfileKeys.value = new Set()
   failedImages.value = new Set()
   synchronizedSessions.value = new Set()
+  takeoverOperationResults.value = []
 })
 
 watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) => {
   contextMessages.value = []
+  takeoverOperationResults.value = []
   await loadQuickReplies()
   if (!accountId || !sid) return
   const profileKey = `${accountId}:${sid}`
@@ -278,7 +348,7 @@ onMounted(async () => {
   await loadAccounts()
   timer = setInterval(() => {
     if (document.visibilityState !== 'visible') return
-    if (hasActiveAutoReply.value) {
+    if (hasActiveTimelineStatus.value) {
       void loadConversationContext(false, false)
       return
     }
@@ -348,8 +418,36 @@ onBeforeUnmount(() => {
 
           <div ref="messagesRef" class="chat__messages">
             <div v-if="contextLoading" class="chat__loading">正在读取完整会话…</div>
-            <template v-for="message in contextMessages" :key="`${message.timelineType || 'MESSAGE'}-${message.id}`">
-              <article v-if="isTimelineStatus(message)" class="chat__timeline-status">
+            <template v-for="message in timelineMessages" :key="`${message.timelineType || 'MESSAGE'}-${message.id}`">
+              <article v-if="message.timelineType === 'HUMAN_TAKEOVER'" class="chat__takeover-card">
+                <div class="chat__takeover-card-header">
+                  <div>
+                    <strong>人工接管中</strong>
+                    <span>AI 自动回复已暂停</span>
+                  </div>
+                  <div class="chat__takeover-control">
+                    <span>结束接管</span>
+                    <button
+                      class="chat__takeover-switch"
+                      type="button"
+                      role="switch"
+                      :aria-checked="true"
+                      aria-label="强制结束人工接管"
+                      title="强制结束人工接管"
+                      :disabled="endingHumanTakeover"
+                      @click="forceEndHumanTakeover"
+                    ><span></span></button>
+                  </div>
+                </div>
+                <p>距离人工接管结束还有 {{ takeoverCountdown(message) }}</p>
+                <time>{{ formatMessageTime(message.messageTime) }}</time>
+              </article>
+              <article v-else-if="message.timelineType === 'HUMAN_TAKEOVER_ENDED'" class="chat__timeline-status chat__timeline-status--takeover-ended">
+                <span>{{ statusLabel(message) }}</span>
+                <p>{{ message.statusReason }}</p>
+                <time>{{ formatMessageTime(message.messageTime) }}</time>
+              </article>
+              <article v-else-if="isTimelineStatus(message)" class="chat__timeline-status">
                 <span>{{ statusLabel(message) }}</span>
                 <p v-if="message.statusReason">{{ message.statusReason }}</p>
                 <time>{{ formatMessageTime(message.messageTime) }}</time>
@@ -405,7 +503,7 @@ onBeforeUnmount(() => {
               <dt>买家</dt><dd>{{ selected.buyerName }}</dd>
               <dt>买家 ID</dt><dd>{{ selected.buyerId }}</dd>
               <dt>商品 ID</dt><dd>{{ selected.latest.xyGoodsId || '-' }}</dd>
-              <dt>历史消息</dt><dd>{{ contextMessages.length }} 条</dd>
+              <dt>历史消息</dt><dd>{{ timelineMessages.length }} 条</dd>
             </dl>
             <router-link class="workbench__btn" :to="{ path: '/buyers', query: { buyerId: selected.buyerId } }">查看买家档案</router-link>
             <router-link class="workbench__btn" :to="{ path: '/orders', query: { buyerId: selected.buyerId } }">查看关联订单</router-link>
@@ -442,6 +540,20 @@ onBeforeUnmount(() => {
 .chat__timeline-status { align-self: center; max-width: 88%; padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 4px; color: #475467; background: #f8fafc; font-size: 12px; text-align: center; }
 .chat__timeline-status p { margin: 3px 0 0; color: #667085; }
 .chat__timeline-status time { display: block; margin-top: 3px; color: #98a2b3; font-size: 11px; }
+.chat__timeline-status--takeover-ended { border-color: #b8e0c5; background: #f0fdf4; color: #166534; }
+.chat__timeline-status--takeover-ended p { color: #166534; }
+.chat__takeover-card { align-self: center; width: min(100%, 480px); padding: 12px; border: 1px solid #f6c86b; border-radius: 6px; color: #78350f; background: #fffbeb; }
+.chat__takeover-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat__takeover-card-header > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
+.chat__takeover-card strong { font-size: 13px; }
+.chat__takeover-card-header > div:first-child span, .chat__takeover-card p, .chat__takeover-card time { color: #92400e; font-size: 12px; }
+.chat__takeover-card p { margin: 10px 0 0; }
+.chat__takeover-card time { display: block; margin-top: 5px; color: #b45309; font-size: 11px; }
+.chat__takeover-control { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; color: #92400e; font-size: 11px; }
+.chat__takeover-switch { position: relative; width: 34px; height: 20px; padding: 0; border: 0; border-radius: 10px; background: #d97706; cursor: pointer; }
+.chat__takeover-switch span { position: absolute; top: 3px; right: 3px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 0.15s ease; }
+.chat__takeover-switch:hover:not(:disabled) { background: #b45309; }
+.chat__takeover-switch:disabled { cursor: wait; opacity: .55; }
 .chat__message { max-width: 72%; align-self: flex-start; }
 .chat__message span, .chat__message time { display: block; color: #98a2b3; font-size: 11px; }
 .chat__message p { margin: 4px 0; padding: 9px 12px; border-radius: 4px 10px 10px; background: #f2f4f7; line-height: 1.6; white-space: pre-wrap; }

@@ -21,9 +21,10 @@ export interface ChatMessage {
   createTime: string;
   messageSource?: string;
   replyOrigin?: string;
-  timelineType?: 'MESSAGE' | 'AI_PENDING' | 'AI_PROCESSING' | 'AI_FAILED' | 'AI_CANCELLED';
+  timelineType?: 'MESSAGE' | 'AI_PENDING' | 'AI_PROCESSING' | 'AI_FAILED' | 'AI_CANCELLED' | 'HUMAN_TAKEOVER' | 'HUMAN_TAKEOVER_ENDED';
   autoReplyRecordId?: number;
   scheduledTime?: string;
+  takeoverEndTime?: string;
   statusReason?: string;
   isNew?: boolean;
 }
@@ -88,6 +89,23 @@ export function syncContextMessages(data: {
     method: 'POST',
     data,
     silent
+  });
+}
+
+export interface EndHumanTakeoverResponse {
+  ended: boolean;
+  changed: boolean;
+  message: string;
+}
+
+export function endHumanTakeover(data: {
+  xianyuAccountId: number;
+  sid: string;
+}) {
+  return request<EndHumanTakeoverResponse>({
+    url: '/msg/human-takeover/end',
+    method: 'POST',
+    data
   });
 }
 
