@@ -102,7 +102,15 @@ arguments=" $* "
   if [[ "${AGENT_TEST_DOCKER_PULL_FAIL:-false}" == 'true' && "$arguments" == *' pull app '* ]]; then
     exit 1
   fi
-if [[ "$arguments" == *' config --services '* ]]; then
+if [[ "$arguments" == *' config --format json '* ]]; then
+  printf '%s\n' '{"networks":{"xianyu2":{"name":"xianyu2_xianyu2","driver":"bridge"}}}'
+elif [[ "${1:-}" == 'network' && "${2:-}" == 'inspect' ]]; then
+  if [[ "${AGENT_TEST_COMPOSE_NETWORK_EXISTS:-false}" == 'true' ]]; then
+    printf 'xianyu2_xianyu2\n'
+  else
+    exit 1
+  fi
+elif [[ "$arguments" == *' config --services '* ]]; then
   printf 'mysql\n'
 elif [[ "$arguments" == *' ps -q app '* ]]; then
   printf 'test-app\n'
@@ -112,6 +120,15 @@ elif [[ "${1:-}" == 'inspect' ]]; then
     else
       printf 'healthy\n'
     fi
+fi
+if [[ -n "${AGENT_TEST_NETWORK_OVERRIDE_LOG:-}" ]]; then
+  args=("$@")
+  for ((index = 0; index + 1 < ${#args[@]}; index++)); do
+    if [[ "${args[$index]}" == '-f' && "${args[$((index + 1))]}" == *'.compose-networks.'* ]]; then
+      cp -- "${args[$((index + 1))]}" "$AGENT_TEST_NETWORK_OVERRIDE_LOG"
+      break
+    fi
+  done
 fi
 exit 0
 EOF
@@ -455,6 +472,26 @@ test_image_update_clears_runtime_jar() {
   grep -Fq "APP_IMAGE_DIGEST=$target_digest" "$project_dir/release.env" || fail 'Image update did not write release.env'
   grep -Fqx 'http://localhost/images/create' "$curl_log" || fail 'Image update did not use the Docker Engine progress endpoint'
   ! grep -Fq '/assets/3' "$curl_log" || fail 'Image update downloaded an unused JAR'
+}
+
+test_existing_compose_network_is_protected_during_app_recreate() {
+  prepare_case compose-network-protection
+  local sha network_override_log
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  network_override_log="$case_root/compose-network-override.yaml"
+  export AGENT_TEST_COMPOSE_NETWORK_EXISTS=true
+  export AGENT_TEST_NETWORK_OVERRIDE_LOG="$network_override_log"
+  run_agent
+  unset AGENT_TEST_COMPOSE_NETWORK_EXISTS AGENT_TEST_NETWORK_OVERRIDE_LOG
+
+  assert_status SUCCESS
+  assert_file_contains "$network_override_log" 'networks:'
+  assert_file_contains "$network_override_log" '  xianyu2:'
+  assert_file_contains "$network_override_log" '    external: true'
+  assert_file_contains "$network_override_log" '    name: xianyu2_xianyu2'
 }
 
 test_jar_download_reports_live_progress() {
@@ -1165,6 +1202,7 @@ for test_case in \
   test_hash_mismatch_preserves_runtime_jar \
   test_unknown_state_falls_back_to_image_update \
   test_image_update_clears_runtime_jar \
+  test_existing_compose_network_is_protected_during_app_recreate \
   run_jar_download_live_progress_test \
   test_image_pull_reports_live_progress \
   test_transfer_deadline_extends_from_observed_speed \

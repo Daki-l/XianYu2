@@ -1899,6 +1899,77 @@ compose() {
     --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" -f "$COMPOSE_FILE" "$@"
 }
 
+prepare_app_network_override() {
+  # A service-only Compose update must not reconcile or recreate an existing
+  # project network. Older containers can retain a different Compose network
+  # hash while a database is still attached, in which case Compose otherwise
+  # tries to remove the shared network before it recreates only the app.
+  local compose_config network_list network_key network_name discovered_network
+  local override has_existing_network=false
+  [[ -n "$download_dir" && -d "$download_dir" ]] || {
+    echo 'A private download directory is required before preparing the Compose network override.' >&2
+    return 1
+  }
+  if ! compose_config="$(compose config --format json)"; then
+    echo 'Unable to resolve the current Compose network configuration before recreating the app.' >&2
+    return 1
+  fi
+  if ! network_list="$(jq -r '
+    (.networks // {})
+    | to_entries[]
+    | select((.value.external // false) | not)
+    | [.key, (.value.name // .key)]
+    | @tsv
+  ' <<< "$compose_config")"; then
+    echo 'Unable to parse the current Compose network configuration before recreating the app.' >&2
+    return 1
+  fi
+
+  override="$(mktemp "$download_dir/.compose-networks.XXXXXX.yaml")"
+  chmod 0600 "$override"
+  printf 'networks:\n' > "$override"
+  while IFS=$'\t' read -r network_key network_name; do
+    [[ -n "$network_key" && -n "$network_name" ]] || continue
+    [[ "$network_key" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] \
+      && [[ "$network_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || {
+      echo 'Compose network names contain unsupported characters for the protected update override.' >&2
+      rm -f "$override"
+      return 1
+    }
+    if ! discovered_network="$(run_with_timeout "$HEALTH_TIMEOUT_SECONDS" \
+      docker network inspect --format '{{.Name}}' "$network_name" 2>/dev/null)"; then
+      # The network does not exist yet. Compose remains responsible for
+      # creating it, which is required during an initial installation.
+      continue
+    fi
+    [[ "$discovered_network" == "$network_name" ]] || {
+      echo 'Docker reported an unexpected Compose network while preparing the app update.' >&2
+      rm -f "$override"
+      return 1
+    }
+    printf '  %s:\n    external: true\n    name: %s\n' "$network_key" "$network_name" >> "$override"
+    has_existing_network=true
+  done <<< "$network_list"
+
+  if [[ "$has_existing_network" != 'true' ]]; then
+    rm -f "$override"
+    return 0
+  fi
+  printf '%s\n' "$override"
+}
+
+recreate_app() {
+  local network_override=''
+  network_override="$(prepare_app_network_override)" || return 1
+  if [[ -n "$network_override" ]]; then
+    run_with_timeout "$HEALTH_TIMEOUT_SECONDS" docker compose --project-directory "$PROJECT_DIR" \
+      --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" -f "$COMPOSE_FILE" -f "$network_override" \
+      up -d --no-deps --force-recreate app
+  else
+    compose up -d --no-deps --force-recreate app
+  fi
+}
+
 wait_for_health() {
   local elapsed=0
   while (( elapsed < HEALTH_TIMEOUT_SECONDS )); do
@@ -2137,7 +2208,7 @@ process_task() {
     mv -f "$temporary_jar" "$RUNTIME_DIR/app.jar"
     write_status RESTARTING 80 '正在重建应用容器'
     app_recreate_started=true
-    compose up -d --no-deps --force-recreate app
+    recreate_app
     wait_for_health
     write_installed_state "$target_version" "$jar_sha" "$fingerprint" "$current_digest" runtime
   else
@@ -2179,7 +2250,7 @@ process_task() {
     fi
     write_status RESTARTING 80 '正在重建应用容器'
     app_recreate_started=true
-    compose up -d --no-deps --force-recreate app
+    recreate_app
     wait_for_health
     write_installed_state "$target_version" "$jar_sha" "$fingerprint" "$image_digest" baseline
   fi
