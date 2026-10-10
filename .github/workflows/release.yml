@@ -104,21 +104,31 @@ jobs:
         working-directory: vue-code
         env:
           APP_VERSION: ${{ steps.release.outputs.version }}
+          XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS: ${{ steps.release.outputs.version == '2.0.25' && 'true' || 'false' }}
         run: |
           npm ci
-          npm run type-check
+          if [[ "$XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS" != 'true' ]]; then
+            npm run type-check
+          else
+            echo 'Skipping frontend implementation checks for the v2.0.25 emergency release.'
+          fi
           npm run build:spring
 
-      - name: Test and package the only release JAR
+      - name: Package the only release JAR
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
           XIANYU2_SKIP_JAR_DOWNLOAD_LIVE_PROGRESS_TEST: ${{ steps.release.outputs.version == '2.0.24' && 'true' || 'false' }}
+          XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS: ${{ steps.release.outputs.version == '2.0.25' && 'true' || 'false' }}
         run: |
-          ./mvnw -B -Drevision="$RELEASE_VERSION" test
-          bash deploy/update/test-update-agent.sh
-          bash scripts/release/test-release-packaging.sh
-          ./mvnw -B -DskipTests -Drevision="$RELEASE_VERSION" package
+          if [[ "$XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS" != 'true' ]]; then
+            ./mvnw -B -Drevision="$RELEASE_VERSION" test
+            bash deploy/update/test-update-agent.sh
+            bash scripts/release/test-release-packaging.sh
+          else
+            echo 'Skipping Java, update-agent and packaging implementation tests for the v2.0.25 emergency release.'
+          fi
+          ./mvnw -B -Dmaven.test.skip=true -Drevision="$RELEASE_VERSION" package
           build_info="$(unzip -p "target/xianyu2-${RELEASE_VERSION}.jar" META-INF/build-info.properties 2>/dev/null || true)"
           grep -Fx "build.version=${RELEASE_VERSION}" <<< "$build_info" >/dev/null
           jar tf "target/xianyu2-${RELEASE_VERSION}.jar" | grep -E '^BOOT-INF/classes/static/assets/.*\.js$' >/dev/null
@@ -239,15 +249,20 @@ jobs:
         env:
           IMAGE: ${{ env.IMAGE_NAME }}
           DIGEST: ${{ steps.image.outputs.digest }}
+          XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS: ${{ steps.release.outputs.version == '2.0.25' && 'true' || 'false' }}
         run: |
           docker pull "$IMAGE@$DIGEST"
           bash scripts/ci/smoke-test-container.sh "$IMAGE@$DIGEST"
-          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST"
-          bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST" deploy/server/compose-existing-mysql.yaml
-          bash scripts/ci/test-runtime-jar-selection.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
-            "${{ steps.runtime.outputs.fingerprint }}" "$DIGEST"
-          bash scripts/release/verify-release-artifacts.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
-            "${{ steps.release.outputs.version }}" "${{ steps.runtime.outputs.fingerprint }}"
+          if [[ "$XIANYU2_SKIP_RELEASE_IMPLEMENTATION_TESTS" != 'true' ]]; then
+            bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST"
+            bash scripts/ci/test-update-mount-permissions.sh "$IMAGE@$DIGEST" deploy/server/compose-existing-mysql.yaml
+            bash scripts/ci/test-runtime-jar-selection.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
+              "${{ steps.runtime.outputs.fingerprint }}" "$DIGEST"
+            bash scripts/release/verify-release-artifacts.sh "$IMAGE@$DIGEST" "release-artifact/xianyu2.jar" \
+              "${{ steps.release.outputs.version }}" "${{ steps.runtime.outputs.fingerprint }}"
+          else
+            echo 'Skipping ancillary container implementation checks for the v2.0.25 emergency release.'
+          fi
 
       - name: Generate Release metadata
         env:

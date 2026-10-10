@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.25",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 3,
+  "manual": {
+    "reason": "v2.0.25 首次可安装的更新代理版本 3。该代理包含 JAR 与 Docker 镜像下载进度、动态超时和下载取消协议，宿主机脚本、systemd unit 与配置必须同步升级。",
+    "instructions": "先按 Release 的验签与校验说明安装 host package，并执行 install-update-agent.sh；确认 curl 支持 Unix socket、Docker daemon 的镜像代理配置可用，以及 /etc/xianyu2/update-agent.conf 配置正确；最后由 root 执行 xianyu2-update-agent --apply-manual-release v2.0.25。"
+  }
+}
