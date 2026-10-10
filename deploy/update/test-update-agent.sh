@@ -36,10 +36,28 @@ done
 test_root="$(mktemp -d)"
 trap 'rm -rf "$test_root"' EXIT
 
+report_github_actions_error() {
+  local message="$1"
+  [[ "${GITHUB_ACTIONS:-false}" == 'true' ]] || return 0
+  message="${message//$'\r'/ }"
+  message="${message//$'\n'/ }"
+  message="${message//%/%25}"
+  printf '::error title=Update agent regression::%s\n' "$message"
+}
+
 fail() {
+  report_github_actions_error "$*"
   echo "FAILED: $*" >&2
   exit 1
 }
+
+on_unexpected_error() {
+  local exit_code=$?
+  report_github_actions_error "Unexpected test command failure at line ${BASH_LINENO[0]} (exit ${exit_code})."
+  exit "$exit_code"
+}
+
+trap on_unexpected_error ERR
 
 assert_file_contains() {
   grep -Fqx "$2" "$1" >/dev/null || fail "Expected $1 to contain: $2"
