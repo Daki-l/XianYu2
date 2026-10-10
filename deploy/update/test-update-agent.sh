@@ -16,6 +16,10 @@ readonly current_agent_version="$(tr -d '[:space:]' < "$script_dir/agent-version
   exit 1
 }
 readonly next_agent_version=$((current_agent_version + 1))
+# Live-transfer tests start while the agent is still fetching and verifying
+# small Release metadata assets. The mocked JAR/image body then deliberately
+# takes several seconds to stream, so the observation window must cover both.
+readonly live_transfer_wait_attempts=200
 
 for command_name in jq flock sha256sum stat mktemp mkfifo setsid; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -284,8 +288,8 @@ run_agent_in_background() {
 
 wait_for_live_transfer() {
   local phase="$1"
-  local attempt
-  for attempt in $(seq 1 60); do
+  local attempt status_snapshot='status.json is unavailable'
+  for attempt in $(seq 1 "$live_transfer_wait_attempts"); do
     if [[ -f "$status_dir/status.json" ]] && jq -e --arg phase "$phase" '
       .status == "DOWNLOADING" and .transfer.phase == $phase
       and (.transfer.downloadedBytes > 0)
@@ -298,7 +302,10 @@ wait_for_live_transfer() {
   done
   kill -KILL -- "-${agent_pid}" 2>/dev/null || true
   wait "$agent_pid" 2>/dev/null || true
-  fail "Did not observe live ${phase} transfer progress: $(cat "$agent_log" 2>/dev/null || true)"
+  if [[ -f "$status_dir/status.json" ]]; then
+    status_snapshot="$(cat "$status_dir/status.json")"
+  fi
+  fail "Did not observe live ${phase} transfer progress; status: ${status_snapshot}; agent log: $(cat "$agent_log" 2>/dev/null || true)"
 }
 
 wait_for_background_agent() {
