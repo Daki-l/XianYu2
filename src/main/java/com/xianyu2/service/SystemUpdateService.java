@@ -45,7 +45,8 @@ public class SystemUpdateService {
             "REQUESTED", "CHECKING", "DOWNLOADING", "VERIFYING", "BACKING_UP",
             "INSTALLING", "RESTARTING", "HEALTH_CHECKING");
     private static final Set<String> TERMINAL_UPDATE_STATUSES = Set.of("SUCCESS", "FAILED", "MANUAL_REQUIRED");
-    private static final Set<String> CANCELLABLE_TRANSFER_PHASES = Set.of("JAR_DOWNLOAD", "IMAGE_PULL");
+    private static final Set<String> CANCELLABLE_TRANSFER_PHASES = Set.of(
+            "JAR_DOWNLOAD", "HOST_PACKAGE_DOWNLOAD", "IMAGE_PULL");
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;

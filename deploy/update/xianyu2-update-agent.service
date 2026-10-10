@@ -23,7 +23,9 @@ PrivateTmp=true
 Environment=HOME=/var/lib/xianyu2/update/private/cosign
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/xianyu2 /etc/xianyu2
+# 项目目录由安装器根据 root 所有的 update-agent.conf 写入对应 drop-in。
+# 这些路径只对已验签 host package 的 root 代理可写，不会挂载到应用容器。
+ReadWritePaths=/var/lib/xianyu2 /etc/xianyu2 /usr/local/lib/xianyu2 /etc/systemd/system
 
 [Install]
 WantedBy=multi-user.target

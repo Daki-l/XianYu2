@@ -12,7 +12,7 @@ Routine releases use this form:
 }
 ```
 
-Set `hostContractRequired` to `true` when the release changes Compose, the update agent, systemd, directory permissions, Docker requirements, or another host contract. Such a release must explain the manual work and can only be applied by a host administrator after that work is complete:
+Set `hostContractRequired` to `true` when the release changes Compose, the update agent, systemd, directory permissions, Docker requirements, or another host contract. Agent v4 and later verify and install the signed, allowlisted host package themselves by default, then resume the same target Release. The `manual` text remains required as the safe fallback shown by old agents or by installations that explicitly disable automatic host-package application:
 
 ```json
 {
@@ -21,9 +21,11 @@ Set `hostContractRequired` to `true` when the release changes Compose, the updat
   "minimumAgentVersion": 2,
   "manual": {
     "reason": "The update agent and its systemd permissions changed.",
-    "instructions": "Verify and install the host package from this Release, then run the documented host migration."
+    "instructions": "An old agent must bootstrap the verified host package once; agent v4 and later apply this package automatically."
   }
 }
 ```
+
+The manifest keeps the legacy wire value `host-package-manual-required` so older agents stop safely instead of treating a host contract change as a normal image update. Agent v4 and later interpret that signed type as an automatic root-agent operation when `AUTO_APPLY_HOST_PACKAGE_UPDATES=true`.
 
 `minimumAgentVersion` cannot exceed `deploy/update/agent-version` packaged by the same tag. Any agent version increase must be delivered through the signed host package; do not use `workflow_dispatch` inputs to reclassify an existing tag.

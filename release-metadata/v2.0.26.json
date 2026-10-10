@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.26",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 4,
+  "manual": {
+    "reason": "更新代理升级到版本 4，新增已签名 host package 的自动安装、受管宿主机文件备份和新代理续跑机制，并扩展了 systemd 的受限写路径。",
+    "instructions": "旧版 agent 需要先完成一次经过验签的 v2.0.26 host package bootstrap；安装 agent v4 后，后续 host package 更新将由网页请求触发的 root 更新代理自动完成。"
+  }
+}

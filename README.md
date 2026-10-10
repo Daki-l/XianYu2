@@ -197,9 +197,9 @@ Playwright Chromium 使用版本锁定的 `ghcr.io/daki-l/xianyu2-playwright:v<P
 
 ### Linux 生产安装与在线更新
 
-生产安装使用两份环境文件：项目目录的 `.env` 仅保存数据库、JWT 等私密配置；`/etc/xianyu2/release.env` 仅保存由更新代理管理的不可变镜像 digest。不要将 GitHub Token、镜像 digest 或数据库密码写入对方文件。更新代理就绪后，管理后台管理员可随时从页面手动提交更新请求；请求仍需经过代理的验签、备份和健康检查。
+生产安装使用两份环境文件：项目目录的 `.env` 仅保存数据库、JWT 等私密配置；`/etc/xianyu2/release.env` 仅保存由更新代理管理的不可变镜像 digest。不要将 GitHub Token、镜像 digest 或数据库密码写入对方文件。更新代理就绪后，管理后台管理员可随时从页面手动提交更新请求；请求仍需经过代理的验签、备份和健康检查。agent v4 起，默认由 root 代理自动安装已验签的 host package、更新 systemd 单元并继续同一个目标版本的部署；应用容器始终只能写入 `update/request`，绝不应获得宿主机 root 目录权限。
 
-宿主机需要 Docker Engine、Docker Compose v2、`curl`、`jq`、`flock`、`sha256sum`、GNU `timeout` 与 Cosign。请仅从 [Sigstore 官方安装说明](https://docs.sigstore.dev/cosign/system_config/installation/) 选择固定的 Cosign 版本，并先核对该版本官方发布的 SHA-256、再执行 `cosign version`。更新代理不会自动安装或升级这些宿主机依赖。
+宿主机需要 Docker Engine、Docker Compose v2、`curl`、`jq`、`flock`、`sha256sum`、GNU `timeout`、GNU `tar`、`find` 与 Cosign。请仅从 [Sigstore 官方安装说明](https://docs.sigstore.dev/cosign/system_config/installation/) 选择固定的 Cosign 版本，并先核对该版本官方发布的 SHA-256、再执行 `cosign version`。更新代理不会自动安装或升级这些宿主机依赖。
 
 ```bash
 # 每次首次安装固定一个正式 tag；不要 clone 默认分支或直接执行其脚本。
@@ -342,7 +342,11 @@ sudo bash deploy/update/install-release.sh "$RELEASE_TAG"
 
 若 GitHub Release 资源直连较慢，可在 root 所有的 `/etc/xianyu2/update-agent.conf` 中设置 `UPDATE_HTTP_PROXY` 为 HTTP 或 HTTPS CONNECT 代理，并用 `UPDATE_NO_PROXY` 配置不走代理的主机、IP 或 CIDR 列表。该设置只在更新代理启动的 `curl` 和 Cosign 进程中生效，用于 Release 元数据、资产下载和签名校验；不会修改应用页面、应用容器、Compose、Docker daemon、系统全局代理或任何其他容器。更新代理不会将代理地址或凭据写入页面和更新状态；配置文件仅应由 root 读取。含保留字符的账号密码必须 URL 编码，并用单引号包裹完整代理 URL。镜像更新时的 `docker pull` 仍由 Docker daemon 的既有网络策略处理，刻意不使用此专用代理。
 
-若更新界面显示“需要人工处理”，说明 Release 改动了 Compose、更新代理、systemd、目录权限或其他宿主机契约。该 Release 的 `release-manifest.json` 若包含新的 `hostPackage`，必须先按上方相同的 Cosign 身份、SHA-256 和 bundle 验证步骤下载并安装该 package；不要从默认分支复制脚本。完成 Release Notes 中的宿主机调整后，再以 root 执行：
+对 agent v4 及更新版本，更新界面遇到 Compose、更新代理、systemd 或受管目录的变更时，root 代理会自动下载 host package、验签 Cosign 与 SHA-256、拒绝非法路径/链接、备份旧受管文件并原子替换。它随后使用新代理继续拉取镜像、切换容器和健康检查；网页会持续显示下载字节、速度与 ETA。如果显式将 `AUTO_APPLY_HOST_PACKAGE_UPDATES=false`，代理会停在“需要人工处理”供管理员处理。
+
+agent v3 及以下没有上述自更新能力。它们遇到 `host-package-manual-required` 必须首次以 root 手工验签、安装 v4 host package 并启用新 unit。这是升级链路中唯一次不可省略的 bootstrap；之后不需再为 agent 版本变更手工 SSH。不应通过开放 `/etc`、`/usr/local`或 systemd 的容器权限来绕过这个边界。
+
+旧 agent 的 fallback 操作仍如下：
 
 ```bash
 sudo /usr/local/lib/xianyu2/xianyu2-update-agent --apply-manual-release vX.Y.Z

@@ -109,7 +109,7 @@ class SystemUpdateServiceTest {
     }
 
     @Test
-    void writesTaskBoundCancellationOnlyForAnActiveTransfer() throws Exception {
+    void writesTaskBoundCancellationForAnActiveHostPackageTransfer() throws Exception {
         Path requestDirectory = temporaryDirectory.resolve("update/request");
         Path statusDirectory = temporaryDirectory.resolve("update/status");
         Files.createDirectories(requestDirectory);
@@ -122,7 +122,7 @@ class SystemUpdateServiceTest {
                 "status", "DOWNLOADING",
                 "progress", 75,
                 "transfer", Map.of(
-                        "phase", "JAR_DOWNLOAD",
+                        "phase", "HOST_PACKAGE_DOWNLOAD",
                         "downloadedBytes", 50L,
                         "totalBytes", 100L,
                         "speedBytesPerSecond", 10L)));

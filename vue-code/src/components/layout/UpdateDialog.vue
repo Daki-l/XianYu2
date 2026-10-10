@@ -97,6 +97,7 @@ const stageLabels: Record<SystemUpdateStatus['status'], string> = {
 
 const transferStageLabels: Record<SystemUpdateTransfer['phase'], string> = {
   JAR_DOWNLOAD: '下载应用 JAR',
+  HOST_PACKAGE_DOWNLOAD: '下载宿主机更新包',
   IMAGE_PULL: '预拉取应用镜像'
 }
 

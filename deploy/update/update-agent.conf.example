@@ -23,6 +23,10 @@ DOCKER_ENGINE_SOCKET=/var/run/docker.sock
 UPDATE_HTTP_PROXY=
 # 仅在 UPDATE_HTTP_PROXY 非空时使用；不要包含空格或通配符。
 UPDATE_NO_PROXY=localhost,127.0.0.1,::1,mysql
+# 默认由 root 更新代理自动安装已验签的 host package，包括自身脚本、systemd 单元和
+# 受管 Compose 文件。应用容器仍仅可写 update/request，不获得宿主机 root 目录权限。
+# 设为 false 可显式禁用此自动接管。
+AUTO_APPLY_HOST_PACKAGE_UPDATES=true
 BACKUP_HOOK=/usr/local/lib/xianyu2/backup-mysql
 HEALTH_TIMEOUT_SECONDS=240
 # 状态心跳、一般恢复、发行元数据/验签和数据库备份的阶段超时（秒）。

@@ -66,6 +66,10 @@ TASK_TOTAL_TIMEOUT_SECONDS=''
 UPDATE_HTTP_PROXY=''
 UPDATE_NO_PROXY=''
 DOCKER_ENGINE_SOCKET=''
+AUTO_APPLY_HOST_PACKAGE_UPDATES=''
+host_package_project_stage=''
+host_package_backup_dir=''
+host_package_previous_deploy=''
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -80,6 +84,27 @@ assert_root_owned_protected_file() {
   (( EUID == 0 )) || return 0
   [[ -f "$path" && ! -L "$path" ]] || {
     echo "$label must be a regular file: $path" >&2
+    return 1
+  }
+  [[ "$(stat -c '%u' "$path")" == 0 ]] || {
+    echo "$label must be owned by root: $path" >&2
+    return 1
+  }
+  local mode
+  mode=$((8#$(stat -c '%a' "$path")))
+  (( (mode & 8#22) == 0 )) || {
+    echo "$label must not be group- or world-writable: $path" >&2
+    return 1
+  }
+  assert_root_owned_protected_parent_directories "$path" "$label"
+}
+
+assert_root_owned_protected_directory() {
+  local path="$1"
+  local label="$2"
+  (( EUID == 0 )) || return 0
+  [[ -d "$path" && ! -L "$path" ]] || {
+    echo "$label must be a real directory: $path" >&2
     return 1
   }
   [[ "$(stat -c '%u' "$path")" == 0 ]] || {
@@ -238,6 +263,18 @@ load_config() {
   UPDATE_HTTP_PROXY="${UPDATE_HTTP_PROXY:-}"
   UPDATE_NO_PROXY="${UPDATE_NO_PROXY:-localhost,127.0.0.1,::1,mysql}"
   DOCKER_ENGINE_SOCKET="${DOCKER_ENGINE_SOCKET:-/var/run/docker.sock}"
+  AUTO_APPLY_HOST_PACKAGE_UPDATES="${AUTO_APPLY_HOST_PACKAGE_UPDATES:-true}"
+  [[ "$PROJECT_DIR" == /* && "$PROJECT_DIR" != '/' && "$PROJECT_DIR" != *$'\n'* ]] || {
+    echo 'PROJECT_DIR must be an absolute non-root path.' >&2
+    return 1
+  }
+  case "$AUTO_APPLY_HOST_PACKAGE_UPDATES" in
+    true|false) ;;
+    *)
+      echo 'AUTO_APPLY_HOST_PACKAGE_UPDATES must be true or false.' >&2
+      return 1
+      ;;
+  esac
   if [[ -n "$UPDATE_HTTP_PROXY" ]]; then
     validate_update_http_proxy "$UPDATE_HTTP_PROXY"
   fi
@@ -264,6 +301,7 @@ load_config() {
     echo 'TASK_TOTAL_TIMEOUT_SECONDS must leave at least 30 seconds before the packaged systemd timeout.' >&2
     return 1
   }
+  assert_root_owned_protected_directory "$PROJECT_DIR" 'Project directory'
   assert_root_owned_protected_file "$COMPOSE_FILE" 'Compose file'
   assert_root_owned_protected_file "$ENV_FILE" 'Environment file'
   if [[ -e "$RELEASE_ENV_FILE" ]]; then
@@ -286,6 +324,8 @@ preflight() {
   require_command stat
   require_command timeout
   require_command mkfifo
+  require_command tar
+  require_command find
   assert_root_owned_protected_file "$agent_version_file" 'Update agent version file'
   case "$(uname -m)" in
     x86_64|amd64) ;;
@@ -353,12 +393,27 @@ stop_task_timeout() {
 }
 
 start_task_timeout() {
+  local now task_started_epoch remaining
   task_started_at="${task_started_at:-$(timestamp)}"
-  task_deadline_epoch=$(( $(date +%s) + TASK_TOTAL_TIMEOUT_SECONDS ))
+  now="$(date +%s)"
+  task_started_epoch="$(date --date="$task_started_at" +%s 2>/dev/null || true)"
+  if [[ "$task_started_epoch" =~ ^[0-9]+$ && "$task_started_epoch" -le "$now" ]]; then
+    remaining=$((TASK_TOTAL_TIMEOUT_SECONDS - (now - task_started_epoch)))
+  else
+    # A malformed persisted timestamp must not silently grant an unbounded
+    # second task lifetime after a self-update hand-off.
+    task_started_at="$(timestamp)"
+    remaining="$TASK_TOTAL_TIMEOUT_SECONDS"
+  fi
+  (( remaining > 0 )) || {
+    echo 'The update task total timeout has elapsed.' >&2
+    return 124
+  }
+  task_deadline_epoch=$((now + remaining))
   (
     # 不让后台 sleep 继承任务锁；代理退出后必须立即允许后续请求重新竞争锁。
     exec 9>&-
-    sleep "$TASK_TOTAL_TIMEOUT_SECONDS"
+    sleep "$remaining"
     kill -TERM "$$" 2>/dev/null || true
   ) &
   task_timeout_pid=$!
@@ -432,7 +487,7 @@ begin_transfer() {
   local progress="$3"
   local message="$4"
   local detail="${5:-}"
-  [[ "$phase" == 'JAR_DOWNLOAD' || "$phase" == 'IMAGE_PULL' ]] || {
+  [[ "$phase" == 'JAR_DOWNLOAD' || "$phase" == 'HOST_PACKAGE_DOWNLOAD' || "$phase" == 'IMAGE_PULL' ]] || {
     echo "Unsupported transfer phase: $phase" >&2
     return 1
   }
@@ -868,7 +923,9 @@ recover_unfinished_task() {
         (( total_remaining < remaining )) && remaining="$total_remaining"
       fi
       if [[ "$previous_status_value" == 'DOWNLOADING' \
-        && ( "$previous_transfer_phase" == 'JAR_DOWNLOAD' || "$previous_transfer_phase" == 'IMAGE_PULL' ) ]]; then
+        && ( "$previous_transfer_phase" == 'JAR_DOWNLOAD' \
+          || "$previous_transfer_phase" == 'HOST_PACKAGE_DOWNLOAD' \
+          || "$previous_transfer_phase" == 'IMAGE_PULL' ) ]]; then
         # A service restart cannot resume the old curl/Docker Engine stream.
         # Keep only the no-byte-progress window before making it retryable.
         local transfer_recovery_remaining=$((DOWNLOAD_IDLE_TIMEOUT_SECONDS + 1))
@@ -997,7 +1054,7 @@ download_api_asset() {
     echo "Invalid release asset id: $asset_id" >&2
     return 1
   }
-  [[ -z "$transfer_phase" || "$transfer_phase" == 'JAR_DOWNLOAD' ]] || {
+  [[ -z "$transfer_phase" || "$transfer_phase" == 'JAR_DOWNLOAD' || "$transfer_phase" == 'HOST_PACKAGE_DOWNLOAD' ]] || {
     echo "Unsupported release asset transfer phase: $transfer_phase" >&2
     return 1
   }
@@ -1344,6 +1401,457 @@ pull_image_with_progress() {
   run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker image inspect "$image_reference" >/dev/null
 }
 
+validate_host_package_archive() {
+  local archive="$1"
+  local version="$2"
+  local prefix="xianyu2-host-package-v${version}/"
+  local listing="$download_dir/host-package-contents.txt"
+  local verbose_listing="$download_dir/host-package-verbose.txt"
+  local entry relative normalized record required
+  declare -A members=()
+
+  [[ -f "$archive" && ! -L "$archive" ]] || {
+    echo 'Host package must be a regular archive file.' >&2
+    return 1
+  }
+  tar -tzf "$archive" > "$listing"
+  tar -tvzf "$archive" > "$verbose_listing"
+
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    [[ "$entry" == "$prefix"* ]] || {
+      echo "Host package contains an unexpected path: $entry" >&2
+      return 1
+    }
+    relative="${entry#"$prefix"}"
+    [[ -z "$relative" ]] && continue
+    normalized="${relative%/}"
+    [[ -n "$normalized" && "$normalized" != '.' && "$normalized" != /* && "$normalized" != *$'\r'* ]] || {
+      echo "Host package contains an unsafe path: $entry" >&2
+      return 1
+    }
+    case "/${normalized}/" in
+      *'/../'*|*'//'*)
+        echo "Host package contains an unsafe path: $entry" >&2
+        return 1
+        ;;
+    esac
+    case "$relative" in
+      .env.example|compose.yaml|deploy/|deploy/nginx/|deploy/server/|deploy/update/|\
+      deploy/nginx/*|deploy/server/*|deploy/update/*) ;;
+      *)
+        echo "Host package path is outside the managed allowlist: $entry" >&2
+        return 1
+        ;;
+    esac
+    [[ -z "${members[$relative]:-}" ]] || {
+      echo "Host package contains a duplicate path: $entry" >&2
+      return 1
+    }
+    members["$relative"]=1
+  done < "$listing"
+
+  while IFS= read -r record || [[ -n "$record" ]]; do
+    case "${record:0:1}" in
+      -|d) ;;
+      *)
+        echo 'Host package may only contain regular files and directories.' >&2
+        return 1
+        ;;
+    esac
+  done < "$verbose_listing"
+
+  for required in \
+    '.env.example' \
+    'compose.yaml' \
+    'deploy/update/agent-version' \
+    'deploy/update/xianyu2-update-agent' \
+    'deploy/update/xianyu2-update-agent.service' \
+    'deploy/update/xianyu2-update-agent.path' \
+    'deploy/update/update-agent.conf.example' \
+    'deploy/update/backup-mysql' \
+    'deploy/update/install-update-agent.sh' \
+    'deploy/update/install-release.sh'; do
+    [[ "${members[$required]:-}" == 1 ]] || {
+      echo "Host package is missing a required path: $required" >&2
+      return 1
+    }
+  done
+}
+
+extract_verified_host_package() {
+  local archive="$1"
+  local stage="$download_dir/host-package"
+  local required
+  mkdir -p "$stage"
+  tar --extract --gzip --file "$archive" --directory "$stage" --strip-components=1 \
+    --no-same-owner --no-same-permissions --numeric-owner
+  for required in \
+    '.env.example' \
+    'compose.yaml' \
+    'deploy/update/agent-version' \
+    'deploy/update/xianyu2-update-agent' \
+    'deploy/update/xianyu2-update-agent.service' \
+    'deploy/update/xianyu2-update-agent.path' \
+    'deploy/update/update-agent.conf.example' \
+    'deploy/update/backup-mysql' \
+    'deploy/update/install-update-agent.sh' \
+    'deploy/update/install-release.sh'; do
+    [[ -f "$stage/$required" && ! -L "$stage/$required" ]] || {
+      echo "Extracted host package path is invalid: $required" >&2
+      return 1
+    }
+  done
+  [[ -d "$stage/deploy" && ! -L "$stage/deploy" ]] || {
+    echo 'Extracted host package deploy directory is invalid.' >&2
+    return 1
+  }
+  printf '%s\n' "$stage"
+}
+
+validate_staged_host_agent_version() {
+  local stage="$1"
+  local minimum_version="$2"
+  local staged_version
+  staged_version="$(tr -d '[:space:]' < "$stage/deploy/update/agent-version")"
+  [[ "$staged_version" =~ ^[1-9][0-9]*$ ]] || {
+    echo 'Host package contains an invalid update-agent version.' >&2
+    return 1
+  }
+  (( 10#$staged_version >= 10#$minimum_version )) || {
+    echo "Host package agent version ${staged_version} is below manifest minimum ${minimum_version}." >&2
+    return 1
+  }
+  (( 10#$staged_version >= 10#$agent_version )) || {
+    echo "Refusing to replace update agent ${agent_version} with older version ${staged_version}." >&2
+    return 1
+  }
+}
+
+prepare_host_package_project_stage() {
+  local extracted_stage="$1"
+  local existing_link
+  [[ "$PROJECT_DIR" != *[[:space:]]* ]] || {
+    echo 'Automatic host-package installation requires PROJECT_DIR without whitespace.' >&2
+    return 1
+  }
+  assert_root_owned_protected_directory "$PROJECT_DIR" 'Project directory'
+  [[ -d "$PROJECT_DIR/deploy" && ! -L "$PROJECT_DIR/deploy" ]] || {
+    echo 'Project deploy directory must be a real directory before automatic host-package installation.' >&2
+    return 1
+  }
+  existing_link="$(find "$PROJECT_DIR/deploy" -type l -print -quit)"
+  [[ -z "$existing_link" ]] || {
+    echo 'Project deploy directory contains a symbolic link; refusing automatic replacement.' >&2
+    return 1
+  }
+  host_package_project_stage="$(mktemp -d "$PROJECT_DIR/.xianyu2-host-stage.${task_id}.XXXXXX")"
+  chmod 0700 "$host_package_project_stage"
+  cp -- "$extracted_stage/.env.example" "$host_package_project_stage/.env.example"
+  cp -- "$extracted_stage/compose.yaml" "$host_package_project_stage/compose.yaml"
+  # Preserve administrator-managed files below deploy/ while atomically
+  # replacing the package-owned entries. The archive itself is allowlisted.
+  cp -a --no-preserve=ownership -- "$PROJECT_DIR/deploy" "$host_package_project_stage/deploy"
+  cp -a --no-preserve=ownership -- "$extracted_stage/deploy/." "$host_package_project_stage/deploy/"
+  if (( EUID == 0 )); then
+    chown -R root:root "$host_package_project_stage"
+  fi
+}
+
+backup_host_package_inputs() {
+  local entry
+  host_package_backup_dir="$UPDATE_WORK_DIR/archive/host-package-${task_id}"
+  [[ ! -e "$host_package_backup_dir" ]] || {
+    echo "Host package backup already exists: $host_package_backup_dir" >&2
+    return 1
+  }
+  install -d -m 0750 "$host_package_backup_dir"
+  for entry in '.env.example' 'compose.yaml' 'deploy'; do
+    [[ -e "$PROJECT_DIR/$entry" && ! -L "$PROJECT_DIR/$entry" ]] || {
+      echo "Cannot back up unmanaged or missing project path: $PROJECT_DIR/$entry" >&2
+      return 1
+    }
+    cp -a -- "$PROJECT_DIR/$entry" "$host_package_backup_dir/$entry"
+  done
+}
+
+backup_installed_agent_component() {
+  local source="$1"
+  local name="$2"
+  local backup_root="$host_package_backup_dir/agent-components"
+  local snapshot="$backup_root/$name"
+  local marker="$backup_root/$name.state"
+  install -d -m 0750 "$backup_root" || return 1
+  if [[ -e "$source" || -L "$source" ]]; then
+    [[ -f "$source" && ! -L "$source" ]] || {
+      echo "Installed update-agent component is not a regular file: $source" >&2
+      return 1
+    }
+    cp -a -- "$source" "$snapshot" || return 1
+    printf 'present\n' > "$marker" || return 1
+  else
+    printf 'absent\n' > "$marker" || return 1
+  fi
+}
+
+backup_installed_agent_components() {
+  # Non-root test runs use a fake installer in an isolated temporary project;
+  # they must never inspect or alter the workstation's systemd installation.
+  if (( EUID != 0 )) && [[ "${XIANYU2_UPDATE_AGENT_TEST_MODE:-false}" == 'true' ]]; then
+    return 0
+  fi
+  backup_installed_agent_component /usr/local/lib/xianyu2/xianyu2-update-agent agent || return 1
+  backup_installed_agent_component /usr/local/lib/xianyu2/agent-version agent-version || return 1
+  backup_installed_agent_component /usr/local/lib/xianyu2/backup-mysql backup-mysql || return 1
+  backup_installed_agent_component /etc/systemd/system/xianyu2-update-agent.service service || return 1
+  backup_installed_agent_component /etc/systemd/system/xianyu2-update-agent.path path || return 1
+  backup_installed_agent_component /etc/systemd/system/xianyu2-update-agent.service.d/project-dir.conf project-dir || return 1
+}
+
+restore_installed_agent_component() {
+  local destination="$1"
+  local name="$2"
+  local backup_root="$host_package_backup_dir/agent-components"
+  local snapshot="$backup_root/$name"
+  local marker="$backup_root/$name.state"
+  local state temporary
+  [[ -f "$marker" ]] || return 0
+  state="$(<"$marker")"
+  case "$state" in
+    present)
+      install -d -m 0755 "$(dirname "$destination")" || return 1
+      temporary="$(mktemp "$(dirname "$destination")/.${destination##*/}.restore.XXXXXX")" || return 1
+      cp -a --no-preserve=ownership -- "$snapshot" "$temporary" || return 1
+      chown root:root "$temporary" || return 1
+      mv -f -- "$temporary" "$destination" || return 1
+      ;;
+    absent)
+      rm -f -- "$destination" || return 1
+      ;;
+    *)
+      echo "Invalid update-agent component backup state: $name" >&2
+      return 1
+      ;;
+  esac
+}
+
+restore_installed_agent_components() {
+  if (( EUID != 0 )) && [[ "${XIANYU2_UPDATE_AGENT_TEST_MODE:-false}" == 'true' ]]; then
+    return 0
+  fi
+  restore_installed_agent_component /usr/local/lib/xianyu2/xianyu2-update-agent agent || return 1
+  restore_installed_agent_component /usr/local/lib/xianyu2/agent-version agent-version || return 1
+  restore_installed_agent_component /usr/local/lib/xianyu2/backup-mysql backup-mysql || return 1
+  restore_installed_agent_component /etc/systemd/system/xianyu2-update-agent.service service || return 1
+  restore_installed_agent_component /etc/systemd/system/xianyu2-update-agent.path path || return 1
+  restore_installed_agent_component /etc/systemd/system/xianyu2-update-agent.service.d/project-dir.conf project-dir || return 1
+  systemctl daemon-reload
+}
+
+restore_host_package_inputs() {
+  [[ -n "$host_package_backup_dir" && -d "$host_package_backup_dir" ]] || return 1
+  local entry temporary failed_deploy restored_deploy
+  for entry in '.env.example' 'compose.yaml'; do
+    temporary="$(mktemp "$PROJECT_DIR/.xianyu2-host-restore-file.XXXXXX")" || return 1
+    cp -a --no-preserve=ownership -- "$host_package_backup_dir/$entry" "$temporary" || return 1
+    if (( EUID == 0 )); then
+      chown root:root "$temporary" || return 1
+    fi
+    mv -f -- "$temporary" "$PROJECT_DIR/$entry" || return 1
+  done
+
+  failed_deploy="$PROJECT_DIR/.xianyu2-host-failed-deploy.${task_id}.${RANDOM}"
+  if [[ -e "$PROJECT_DIR/deploy" || -L "$PROJECT_DIR/deploy" ]]; then
+    mv -- "$PROJECT_DIR/deploy" "$failed_deploy" || return 1
+  fi
+  restored_deploy="$PROJECT_DIR/.xianyu2-host-restore-deploy.${task_id}.${RANDOM}"
+  cp -a --no-preserve=ownership -- "$host_package_backup_dir/deploy" "$restored_deploy" || return 1
+  if (( EUID == 0 )); then
+    chown -R root:root "$restored_deploy" || return 1
+  fi
+  mv -- "$restored_deploy" "$PROJECT_DIR/deploy" || return 1
+}
+
+apply_staged_host_package() {
+  backup_host_package_inputs
+  prepare_host_package_project_stage "$1"
+
+  if ! mv -f -- "$host_package_project_stage/.env.example" "$PROJECT_DIR/.env.example"; then
+    restore_host_package_inputs || true
+    return 1
+  fi
+  if ! mv -f -- "$host_package_project_stage/compose.yaml" "$PROJECT_DIR/compose.yaml"; then
+    restore_host_package_inputs || true
+    return 1
+  fi
+
+  host_package_previous_deploy="$PROJECT_DIR/.xianyu2-host-previous-deploy.${task_id}.${RANDOM}"
+  if ! mv -- "$PROJECT_DIR/deploy" "$host_package_previous_deploy"; then
+    restore_host_package_inputs || true
+    return 1
+  fi
+  if ! mv -- "$host_package_project_stage/deploy" "$PROJECT_DIR/deploy"; then
+    mv -- "$host_package_previous_deploy" "$PROJECT_DIR/deploy" 2>/dev/null || true
+    restore_host_package_inputs || true
+    return 1
+  fi
+  rmdir "$host_package_project_stage" 2>/dev/null || true
+  host_package_project_stage=''
+}
+
+discard_host_package_swap_backup() {
+  [[ -n "$host_package_previous_deploy" && -d "$host_package_previous_deploy" ]] || return 0
+  rm -rf -- "$host_package_previous_deploy"
+  host_package_previous_deploy=''
+}
+
+mark_self_update_handoff() {
+  local temporary payload
+  [[ -n "$task_id" && -n "$task_file" && -f "$task_file" && ! -L "$task_file" ]] || {
+    echo 'The active update task is unavailable for the self-update hand-off.' >&2
+    return 1
+  }
+  payload="$(jq -ce --arg taskId "$task_id" --arg version "$task_version" \
+    --arg startedAt "$task_started_at" '
+      if .schemaVersion == 1 and .taskId == $taskId and .version == $version
+      then .selfUpdateHandoff = {completedAt: (now | todateiso8601), taskStartedAt: $startedAt}
+      else error("active update task does not match the self-update hand-off")
+      end
+    ' "$task_file")" || return 1
+  temporary="$(mktemp "$UPDATE_WORK_DIR/in-progress/.${task_id}.self-update.XXXXXX")" || return 1
+  printf '%s\n' "$payload" > "$temporary"
+  chmod 0600 "$temporary"
+  if (( EUID == 0 )); then
+    chown root:root "$temporary"
+  fi
+  mv -f -- "$temporary" "$task_file"
+}
+
+resume_self_updated_task() {
+  local resume_task_id="$1"
+  local recorded_task_id recorded_version recorded_tag recorded_started_at remaining_task
+  [[ "$resume_task_id" =~ ^[0-9a-fA-F-]{36}$ ]] || {
+    echo 'Invalid self-update hand-off task identifier.' >&2
+    return 64
+  }
+  task_file="$UPDATE_WORK_DIR/in-progress/${resume_task_id}.json"
+  [[ -f "$task_file" && ! -L "$task_file" ]] || {
+    echo 'The self-update hand-off task is unavailable.' >&2
+    return 1
+  }
+  remaining_task="$(find "$UPDATE_WORK_DIR/in-progress" -maxdepth 1 -type f -name '*.json' ! -name "${resume_task_id}.json" -print -quit)"
+  [[ -z "$remaining_task" ]] || {
+    echo 'Another unfinished update task exists; refusing an ambiguous self-update hand-off.' >&2
+    return 1
+  }
+  recorded_task_id="$(jq -er '.taskId' "$task_file")"
+  recorded_version="$(jq -er '.version' "$task_file")"
+  recorded_tag="$(jq -er '.releaseTag' "$task_file")"
+  recorded_started_at="$(jq -er '.selfUpdateHandoff.taskStartedAt' "$task_file")"
+  [[ "$recorded_task_id" == "$resume_task_id" && "$recorded_tag" =~ $release_tag_pattern ]] || {
+    echo 'The self-update hand-off task is invalid.' >&2
+    return 1
+  }
+  [[ "$recorded_version" == "${recorded_tag#v}" ]] && is_release_version "$recorded_version" || {
+    echo 'The self-update hand-off task has an invalid version.' >&2
+    return 1
+  }
+  date --date="$recorded_started_at" +%s >/dev/null 2>&1 || {
+    echo 'The self-update hand-off task has an invalid start time.' >&2
+    return 1
+  }
+  task_id="$recorded_task_id"
+  task_version="$recorded_version"
+  task_started_at="$recorded_started_at"
+}
+
+continue_with_updated_agent() {
+  local staged_agent="$1"
+  local updated_agent
+  [[ -f "$staged_agent" && ! -L "$staged_agent" ]] || {
+    echo 'The staged update agent is unavailable.' >&2
+    return 1
+  }
+
+  mark_self_update_handoff
+  # Keep the original private task and task ID. The new agent resumes it from
+  # the exact Release tag rather than manufacturing a second manual task.
+  write_status INSTALLING 68 '宿主机更新组件已安装，正在由新更新代理继续部署'
+  stop_heartbeat
+  stop_task_timeout
+  if [[ "${XIANYU2_UPDATE_AGENT_TEST_MODE:-false}" == 'true' && "$EUID" -ne 0 ]]; then
+    # The isolated regression fixture deliberately never writes /usr/local.
+    updated_agent="$staged_agent"
+  else
+    updated_agent='/usr/local/lib/xianyu2/xianyu2-update-agent'
+    [[ -f "$updated_agent" && ! -L "$updated_agent" ]] || {
+      echo 'The installed update agent is unavailable after self-update.' >&2
+      return 1
+    }
+    cleanup_download_dir
+    download_dir=''
+  fi
+  # The service process becomes the installed agent. Closing this descriptor
+  # lets the new process re-acquire the same lock without a second service run.
+  exec 9>&-
+  exec bash "$updated_agent" --resume-host-package-update "$task_id"
+}
+
+auto_apply_host_package_update() {
+  local release_json="$1"
+  local target_version="$2"
+  local host_package_name="$3"
+  local host_package_sha="$4"
+  local host_package_size="$5"
+  local minimum_agent_version="$6"
+  local certificate_identity="$7"
+  local host_package host_package_bundle extracted_stage
+
+  # The test harness runs an isolated, non-root filesystem and never grants
+  # host privileges. Production systemd invocations must always remain root.
+  (( EUID == 0 )) || [[ "${XIANYU2_UPDATE_AGENT_TEST_MODE:-false}" == 'true' ]] || {
+    echo 'Automatic host-package installation requires the root systemd update agent.' >&2
+    return 1
+  }
+  (( host_package_size <= 67108864 )) || {
+    echo 'Host package exceeds the 64 MiB automatic-installation limit.' >&2
+    return 1
+  }
+  host_package="$download_dir/$host_package_name"
+  host_package_bundle="$download_dir/${host_package_name}.bundle"
+
+  download_api_asset "$(release_asset_id "$release_json" "$host_package_name")" "$host_package" \
+    HOST_PACKAGE_DOWNLOAD "$host_package_size" 20 '正在下载宿主机更新包'
+  [[ "$(stat -c '%s' "$host_package")" == "$host_package_size" ]] || {
+    echo 'Downloaded host package size does not match the signed manifest.' >&2
+    return 1
+  }
+  write_status VERIFYING 35 '正在验证宿主机更新包签名和校验和'
+  download_api_asset "$(release_asset_id "$release_json" "${host_package_name}.bundle")" "$host_package_bundle"
+  verify_blob "$host_package" "$host_package_bundle" "$certificate_identity"
+  [[ "$(sha256sum "$host_package" | awk '{print $1}')" == "$host_package_sha" ]] || {
+    echo 'Host package checksum does not match the signed manifest.' >&2
+    return 1
+  }
+  validate_host_package_archive "$host_package" "$target_version"
+  extracted_stage="$(extract_verified_host_package "$host_package")"
+  validate_staged_host_agent_version "$extracted_stage" "$minimum_agent_version"
+
+  write_status INSTALLING 48 '正在备份受管宿主机组件'
+  apply_staged_host_package "$extracted_stage"
+  if ! backup_installed_agent_components; then
+    restore_host_package_inputs || true
+    return 1
+  fi
+  write_status INSTALLING 60 '正在安装受管宿主机组件'
+  if ! XIANYU2_UPDATE_AGENT_SELF_UPDATE=true bash "$PROJECT_DIR/deploy/update/install-update-agent.sh"; then
+    restore_host_package_inputs || true
+    restore_installed_agent_components || true
+    return 1
+  fi
+  discard_host_package_swap_backup
+  continue_with_updated_agent "$extracted_stage/deploy/update/xianyu2-update-agent"
+}
+
 release_certificate_identity() {
   local release_tag="$1"
   printf '%s%s\n' "$cosign_identity_prefix" "$release_tag"
@@ -1532,16 +2040,37 @@ process_task() {
   release_asset_id "$release_json" "$host_package_name" >/dev/null
   release_asset_id "$release_json" "${host_package_name}.bundle" >/dev/null
 
+  local installed current_digest installed_version
+  installed="$RUNTIME_DIR/installed.json"
+  current_digest="$(read_release_env_digest || true)"
+  installed_version="$(jq -r '.version // empty' "$installed" 2>/dev/null || true)"
+  if is_release_version "$installed_version" && is_older_release_version "$target_version" "$installed_version"; then
+    echo "Refusing to downgrade from ${installed_version} to ${target_version}." >&2
+    return 1
+  fi
+
   if [[ "$update_type" == 'host-package-manual-required' && "$manual_approved" != 'true' && "$initial_install" != 'true' ]]; then
-    [[ "$(jq -r '.manual.instructions // .manualInstructions // empty' "$manifest")" != '' ]] || {
-      echo 'Manual-required release is missing manual instructions.' >&2
-      return 1
-    }
-    write_status MANUAL_REQUIRED 100 '此版本需要人工更新宿主机依赖' \
-      "$(jq -r '[(.manual.reason // ""), (.manual.instructions // .manualInstructions // "请查看 Release 说明。")]
-        | map(select(length > 0)) | join(" ")' "$manifest")"
-    archive_task
-    return 0
+    if [[ "$AUTO_APPLY_HOST_PACKAGE_UPDATES" != 'true' ]]; then
+      [[ "$(jq -r '.manual.instructions // .manualInstructions // empty' "$manifest")" != '' ]] || {
+        echo 'Manual-required release is missing manual instructions.' >&2
+        return 1
+      }
+      write_status MANUAL_REQUIRED 100 '此版本需要人工更新宿主机依赖' \
+        "$(jq -r '[(.manual.reason // ""), (.manual.instructions // .manualInstructions // "请查看 Release 说明。")]
+          | map(select(length > 0)) | join(" ")' "$manifest")"
+      archive_task
+      return 0
+    fi
+    if (( EUID != 0 )) && [[ "${XIANYU2_UPDATE_AGENT_TEST_MODE:-false}" != 'true' ]]; then
+      write_status MANUAL_REQUIRED 100 '自动安装宿主机更新包需要 root 更新代理' \
+        '请确认请求由 xianyu2-update-agent.service 处理；不要向应用容器授予宿主机目录或 systemd 权限。'
+      archive_task
+      return 0
+    fi
+    auto_apply_host_package_update "$release_json" "$target_version" \
+      "$host_package_name" "$host_package_sha" "$host_package_size" \
+      "$minimum_agent_version" "$certificate_identity"
+    return $?
   fi
   (( agent_version >= minimum_agent_version )) || {
     write_status MANUAL_REQUIRED 100 '更新代理版本过低' \
@@ -1554,14 +2083,6 @@ process_task() {
   fi
   [[ "$update_type" == 'jar' || "$update_type" == 'image' ]] || return 1
 
-  local installed current_digest installed_version
-  installed="$RUNTIME_DIR/installed.json"
-  current_digest="$(read_release_env_digest || true)"
-  installed_version="$(jq -r '.version // empty' "$installed" 2>/dev/null || true)"
-  if is_release_version "$installed_version" && is_older_release_version "$target_version" "$installed_version"; then
-    echo "Refusing to downgrade from ${installed_version} to ${target_version}." >&2
-    return 1
-  fi
   if [[ "$update_type" == 'jar' ]]; then
     if [[ ! -f "$installed" ]] \
       || [[ -z "$current_digest" || "$current_digest" != "$(jq -r '.imageDigest // empty' "$installed" 2>/dev/null || true)" ]] \
@@ -1685,6 +2206,7 @@ create_manual_task() {
 
 main() {
   local manual_tag=''
+  local resume_task_id=''
   load_config
   preflight
   case "${1:-}" in
@@ -1698,6 +2220,13 @@ main() {
       }
       manual_tag="$2"
       ;;
+    --resume-host-package-update)
+      [[ $# -eq 2 ]] || {
+        echo 'Usage: xianyu2-update-agent --resume-host-package-update TASK_ID' >&2
+        exit 64
+      }
+      resume_task_id="$2"
+      ;;
     *)
       echo "Unsupported argument: $1" >&2
       exit 64
@@ -1710,6 +2239,11 @@ main() {
   exec 9>"$UPDATE_WORK_DIR/agent.lock"
   if ! flock -n 9; then
     echo 'Another update agent invocation still holds the update lock.' >&2
+    exit 0
+  fi
+  if [[ -n "$resume_task_id" ]]; then
+    resume_self_updated_task "$resume_task_id"
+    process_task true
     exit 0
   fi
   local recovery_exit=0

@@ -26,7 +26,7 @@ readonly next_agent_version=$((current_agent_version + 1))
 # takes several seconds to stream, so the observation window must cover both.
 readonly live_transfer_wait_attempts=200
 
-for command_name in jq flock sha256sum stat mktemp mkfifo setsid; do
+for command_name in jq flock sha256sum stat mktemp mkfifo setsid tar; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "Missing test dependency: $command_name" >&2
     exit 1
@@ -175,6 +175,8 @@ case "$url" in
     fi
     ;;
   */assets/4) cp "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar.bundle" "$destination" ;;
+  */assets/5) cp "$AGENT_TEST_FIXTURE/xianyu2-host-package-v2.0.8.tar.gz" "$destination" ;;
+  */assets/6) cp "$AGENT_TEST_FIXTURE/xianyu2-host-package-v2.0.8.tar.gz.bundle" "$destination" ;;
   *) echo "Unexpected curl URL: $url" >&2; exit 1 ;;
 esac
 if [[ "$write_status" == true ]]; then
@@ -184,27 +186,56 @@ EOF
   chmod +x "$mock_bin/cosign" "$mock_bin/docker" "$mock_bin/curl"
 }
 
+write_host_package_fixture() {
+  local package_agent_version="$1"
+  local package_root="$fixture_dir/xianyu2-host-package-v2.0.8"
+  rm -rf "$package_root" "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz"
+  mkdir -p "$package_root/deploy/nginx" "$package_root/deploy/server" "$package_root/deploy/update"
+  printf 'new environment example\n' > "$package_root/.env.example"
+  printf 'new-compose\n' > "$package_root/compose.yaml"
+  printf 'server config\n' > "$package_root/deploy/nginx/default.conf"
+  printf 'server compose\n' > "$package_root/deploy/server/compose-existing-mysql.yaml"
+  printf 'server nginx\n' > "$package_root/deploy/server/xianyu2.nginx.conf"
+  cp "$agent" "$package_root/deploy/update/xianyu2-update-agent"
+  printf '%s\n' "$package_agent_version" > "$package_root/deploy/update/agent-version"
+  printf 'config example\n' > "$package_root/deploy/update/update-agent.conf.example"
+  printf 'backup hook\n' > "$package_root/deploy/update/backup-mysql"
+  printf 'release installer\n' > "$package_root/deploy/update/install-release.sh"
+cat > "$package_root/deploy/update/install-update-agent.sh" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf 'host package installer executed\n' >> "$AGENT_TEST_HOST_INSTALL_LOG"
+[[ "${AGENT_TEST_HOST_INSTALL_FAIL:-false}" != 'true' ]]
+EOF
+  tar -C "$fixture_dir" -czf "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz" "$(basename "$package_root")"
+  : > "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz.bundle"
+}
+
 write_fixture() {
   local update_type="$1"
   local declared_sha="$2"
   local requires_backup="${3:-false}"
   local minimum_agent_version="${4:-1}"
+  local package_agent_version="${5:-$current_agent_version}"
   fixture_dir="$case_root/fixture"
   mkdir -p "$fixture_dir"
   printf 'new-release-jar\n' > "$fixture_dir/xianyu2-v2.0.8.jar"
   : > "$fixture_dir/release-manifest.json.bundle"
   : > "$fixture_dir/xianyu2-v2.0.8.jar.bundle"
-  local jar_size
+  write_host_package_fixture "$package_agent_version"
+  local jar_size host_package_size host_package_sha
   jar_size="$(stat -c '%s' "$fixture_dir/xianyu2-v2.0.8.jar")"
+  host_package_size="$(stat -c '%s' "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz")"
+  host_package_sha="$(sha256sum "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz" | awk '{print $1}')"
   jq -n --arg tag "$target_tag" --arg version "$target_version" \
     --arg commit '1111111111111111111111111111111111111111' --arg fingerprint "$fingerprint" \
-    --arg type "$update_type" --arg sha "$declared_sha" --arg digest "$target_digest" \
-    --argjson size "$jar_size" --argjson backup "$requires_backup" --argjson minimumAgentVersion "$minimum_agent_version" \
+    --arg type "$update_type" --arg sha "$declared_sha" --arg digest "$target_digest" --arg hostSha "$host_package_sha" \
+    --argjson size "$jar_size" --argjson hostSize "$host_package_size" --argjson backup "$requires_backup" --argjson minimumAgentVersion "$minimum_agent_version" \
     '{schemaVersion: 1, releaseTag: $tag, version: $version, commitSha: $commit,
       platform: "linux/amd64", minimumAgentVersion: $minimumAgentVersion, runtimeFingerprint: $fingerprint,
       updateType: $type, jar: {name: "xianyu2-v2.0.8.jar", sha256: $sha, size: $size},
       hostPackage: {name: "xianyu2-host-package-v2.0.8.tar.gz",
-        sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", size: 1},
+        sha256: $hostSha, size: $hostSize},
       image: {repository: "ghcr.io/daki-l/xianyu2", digest: $digest},
       database: {requiresBackup: $backup},
       manual: {reason: "test host contract", instructions: "complete the test host change first"}}' > "$fixture_dir/release-manifest.json"
@@ -227,9 +258,11 @@ prepare_case() {
   runtime_dir="$case_root/runtime"
   project_dir="$case_root/project"
   config_file="$case_root/update-agent.conf"
-  mkdir -p "$request_dir" "$status_dir" "$work_dir" "$runtime_dir" "$project_dir"
-  : > "$project_dir/compose.yaml"
+  mkdir -p "$request_dir" "$status_dir" "$work_dir" "$runtime_dir" "$project_dir/deploy/update"
+  printf 'old environment example\n' > "$project_dir/.env.example"
+  printf 'old-compose\n' > "$project_dir/compose.yaml"
   : > "$project_dir/.env"
+  printf 'old deploy file\n' > "$project_dir/deploy/update/old-file"
   printf 'APP_IMAGE=ghcr.io/daki-l/xianyu2@%s\nAPP_IMAGE_DIGEST=%s\n' "$current_digest" "$current_digest" > "$project_dir/release.env"
   cat > "$config_file" <<EOF
 PROJECT_DIR=$project_dir
@@ -296,7 +329,8 @@ wait_for_live_transfer() {
   local attempt status_snapshot='status.json is unavailable' last_transfer_status='no downloading transfer status was observed'
   for attempt in $(seq 1 "$live_transfer_wait_attempts"); do
     if [[ -f "$status_dir/status.json" ]]; then
-      if jq -e --arg phase '.status == "DOWNLOADING" and .transfer.phase == $phase' "$status_dir/status.json" >/dev/null 2>&1; then
+      if jq -e --arg phase "$phase" \
+        '.status == "DOWNLOADING" and .transfer.phase == $phase' "$status_dir/status.json" >/dev/null 2>&1; then
         last_transfer_status="$(cat "$status_dir/status.json")"
       fi
       if jq -e --arg phase "$phase" '
@@ -723,8 +757,95 @@ test_invalid_update_proxy_is_rejected_before_network_calls() {
   [[ ! -s "$proxy_log" ]] || fail 'Invalid update proxy started a network client'
 }
 
+test_verified_host_package_is_auto_applied_and_resumed() {
+  prepare_case auto-host-package
+  local sha
+  write_fixture host-package-manual-required placeholder false "$current_agent_version" "$current_agent_version"
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture host-package-manual-required "$sha" false "$current_agent_version" "$current_agent_version"
+  write_request
+  printf 'application-secret-must-survive\n' > "$project_dir/.env"
+  host_install_log="$case_root/host-installer.log"
+  : > "$host_install_log"
+  export AGENT_TEST_HOST_INSTALL_LOG="$host_install_log"
+  export XIANYU2_UPDATE_AGENT_TEST_MODE=true
+  run_agent
+  unset AGENT_TEST_HOST_INSTALL_LOG XIANYU2_UPDATE_AGENT_TEST_MODE
+
+  assert_status SUCCESS
+  [[ "$(jq -r '.taskId' "$status_dir/status.json")" == "$task_id" ]] \
+    || fail 'Self-updated agent did not preserve the original web update task identifier'
+  assert_file_contains "$host_install_log" 'host package installer executed'
+  assert_file_contains "$project_dir/compose.yaml" 'new-compose'
+  assert_file_contains "$project_dir/.env" 'application-secret-must-survive'
+  [[ "$(tr -d '[:space:]' < "$project_dir/deploy/update/agent-version")" == "$current_agent_version" ]] \
+    || fail 'Auto-applied host package did not replace the project update agent'
+  assert_file_contains "$work_dir/archive/host-package-${task_id}/compose.yaml" 'old-compose'
+  grep -Fqx 'http://localhost/images/create' "$curl_log" \
+    || fail 'Updated agent did not resume the image deployment after host package installation'
+}
+
+test_unsafe_host_package_is_rejected_before_project_replacement() {
+  prepare_case unsafe-host-package
+  local sha package_root package_sha package_size
+  write_fixture host-package-manual-required placeholder false "$current_agent_version" "$current_agent_version"
+  package_root="$fixture_dir/xianyu2-host-package-v2.0.8"
+  ln -s /etc/passwd "$package_root/deploy/update/untrusted-link"
+  tar -C "$fixture_dir" -czf "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz" "$(basename "$package_root")"
+  package_sha="$(sha256sum "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz" | awk '{print $1}')"
+  package_size="$(stat -c '%s' "$fixture_dir/xianyu2-host-package-v2.0.8.tar.gz")"
+  jq --arg sha "$package_sha" --argjson size "$package_size" \
+    '.hostPackage.sha256 = $sha | .hostPackage.size = $size' "$fixture_dir/release-manifest.json" \
+    > "$fixture_dir/release-manifest.json.tmp"
+  mv "$fixture_dir/release-manifest.json.tmp" "$fixture_dir/release-manifest.json"
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  jq --arg sha "$sha" '.jar.sha256 = $sha' "$fixture_dir/release-manifest.json" \
+    > "$fixture_dir/release-manifest.json.tmp"
+  mv "$fixture_dir/release-manifest.json.tmp" "$fixture_dir/release-manifest.json"
+  write_request
+  export XIANYU2_UPDATE_AGENT_TEST_MODE=true
+  if run_agent; then
+    unset XIANYU2_UPDATE_AGENT_TEST_MODE
+    fail 'Unsafe host package unexpectedly succeeded'
+  fi
+  unset XIANYU2_UPDATE_AGENT_TEST_MODE
+
+  assert_status FAILED
+  assert_file_contains "$project_dir/compose.yaml" 'old-compose'
+  [[ -f "$project_dir/deploy/update/old-file" ]] \
+    || fail 'Unsafe host package changed the existing project deploy directory'
+}
+
+test_failed_host_package_install_restores_project_files() {
+  prepare_case failed-host-package-install
+  local sha
+  write_fixture host-package-manual-required placeholder false "$current_agent_version" "$current_agent_version"
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture host-package-manual-required "$sha" false "$current_agent_version" "$current_agent_version"
+  write_request
+  printf 'application-secret-must-survive\n' > "$project_dir/.env"
+  host_install_log="$case_root/host-installer.log"
+  : > "$host_install_log"
+  export AGENT_TEST_HOST_INSTALL_LOG="$host_install_log"
+  export AGENT_TEST_HOST_INSTALL_FAIL=true
+  export XIANYU2_UPDATE_AGENT_TEST_MODE=true
+  if run_agent; then
+    unset AGENT_TEST_HOST_INSTALL_LOG AGENT_TEST_HOST_INSTALL_FAIL XIANYU2_UPDATE_AGENT_TEST_MODE
+    fail 'Failed host package installer unexpectedly succeeded'
+  fi
+  unset AGENT_TEST_HOST_INSTALL_LOG AGENT_TEST_HOST_INSTALL_FAIL XIANYU2_UPDATE_AGENT_TEST_MODE
+
+  assert_status FAILED
+  assert_file_contains "$host_install_log" 'host package installer executed'
+  assert_file_contains "$project_dir/compose.yaml" 'old-compose'
+  assert_file_contains "$project_dir/.env" 'application-secret-must-survive'
+  [[ -f "$project_dir/deploy/update/old-file" ]] \
+    || fail 'Failed host package installer did not restore the previous deploy directory'
+}
+
 test_manual_release_requires_host_confirmation() {
   prepare_case manual-release
+  printf '%s\n' 'AUTO_APPLY_HOST_PACKAGE_UPDATES=false' >> "$config_file"
   local sha
   write_fixture host-package-manual-required placeholder
   sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
@@ -753,6 +874,7 @@ test_initial_install_applies_verified_manual_release() {
 
 test_newer_agent_is_required_for_manual_application() {
   prepare_case minimum-agent-version
+  printf '%s\n' 'AUTO_APPLY_HOST_PACKAGE_UPDATES=false' >> "$config_file"
   local sha
   write_fixture host-package-manual-required placeholder false "$next_agent_version"
   sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
@@ -918,6 +1040,7 @@ test_transfer_recovery_uses_idle_timeout_after_restart() {
 test_total_timeout_wins_over_a_recent_heartbeat_after_restart() {
   prepare_case total-timeout-recovery
   write_fixture image 'placeholder'
+  printf '%s\n' 'TASK_TOTAL_TIMEOUT_SECONDS=1' >> "$config_file"
   mkdir -p "$work_dir/in-progress"
   jq -n --arg taskId "$task_id" --arg tag "$target_tag" --arg version "$target_version" \
     '{schemaVersion: 1, taskId: $taskId, releaseTag: $tag, version: $version}' > "$work_dir/in-progress/${task_id}.json"
@@ -982,8 +1105,8 @@ test_systemd_start_limit_is_explicit() {
 
 test_installer_enables_boot_recovery_service() {
   local installer="$script_dir/install-update-agent.sh"
-  grep -Fq 'timeout mkfifo' "$installer" \
-    || fail 'Update agent installer does not verify the FIFO dependency'
+  grep -Fq 'timeout mkfifo tar find' "$installer" \
+    || fail 'Update agent installer does not verify host-package dependencies'
   grep -Fq 'TASK_TOTAL_TIMEOUT_SECONDS=2400' "$installer" \
     || fail 'Update agent installer does not migrate the legacy total-timeout default'
   grep -Fq 'TASK_TOTAL_TIMEOUT_SECONDS=17100' "$installer" \
@@ -992,6 +1115,10 @@ test_installer_enables_boot_recovery_service() {
     || fail 'Update agent installer does not enable the boot recovery service'
   grep -Fx 'systemctl start xianyu2-update-agent.service' "$installer" >/dev/null \
     || fail 'Update agent installer does not start the recovery service'
+  grep -Fq 'XIANYU2_UPDATE_AGENT_SELF_UPDATE' "$installer" \
+    || fail 'Update agent installer can deadlock by starting its own active service'
+  grep -Fq 'install_project_write_path_override' "$installer" \
+    || fail 'Update agent installer does not create the project write-path override'
 }
 
 run_case() {
@@ -1027,6 +1154,9 @@ for test_case in \
   test_configured_update_proxy_is_scoped_to_download_clients \
   test_update_clients_ignore_inherited_proxy_without_configuration \
   test_invalid_update_proxy_is_rejected_before_network_calls \
+  test_verified_host_package_is_auto_applied_and_resumed \
+  test_unsafe_host_package_is_rejected_before_project_replacement \
+  test_failed_host_package_install_restores_project_files \
   test_manual_release_requires_host_confirmation \
   test_initial_install_applies_verified_manual_release \
   test_newer_agent_is_required_for_manual_application \

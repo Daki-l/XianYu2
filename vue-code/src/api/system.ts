@@ -3,7 +3,7 @@ import { request } from '@/utils/request'
 export type UserRole = 'ADMIN' | 'USER'
 
 export interface SystemUpdateTransfer {
-  phase: 'JAR_DOWNLOAD' | 'IMAGE_PULL'
+  phase: 'JAR_DOWNLOAD' | 'HOST_PACKAGE_DOWNLOAD' | 'IMAGE_PULL'
   downloadedBytes: number
   totalBytes: number
   speedBytesPerSecond: number
@@ -112,7 +112,7 @@ export function requestSystemUpdate() {
   })
 }
 
-/** 请求取消仍处于下载或镜像预拉取阶段的更新任务 */
+/** 请求取消仍处于应用包、宿主机包下载或镜像预拉取阶段的更新任务 */
 export function cancelSystemUpdate() {
   return request<SystemUpdateStatus>({
     url: '/system/update/cancel',
