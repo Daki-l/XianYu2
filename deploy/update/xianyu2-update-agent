@@ -45,7 +45,7 @@ transfer_eta_seconds=''
 transfer_current_layer=''
 transfer_completed_layers=0
 transfer_total_layers=0
-transfer_last_sample_epoch=0
+transfer_last_sample_millis=0
 transfer_last_sample_bytes=0
 transfer_last_progress_epoch=0
 transfer_started_epoch=0
@@ -418,7 +418,7 @@ reset_transfer_state() {
   transfer_current_layer=''
   transfer_completed_layers=0
   transfer_total_layers=0
-  transfer_last_sample_epoch=0
+  transfer_last_sample_millis=0
   transfer_last_sample_bytes=0
   transfer_last_progress_epoch=0
   transfer_started_epoch=0
@@ -444,9 +444,9 @@ begin_transfer() {
   reset_transfer_state
   transfer_phase="$phase"
   transfer_total_bytes="$total_bytes"
-  transfer_last_sample_epoch="$(date +%s)"
-  transfer_last_progress_epoch="$transfer_last_sample_epoch"
-  transfer_started_epoch="$transfer_last_sample_epoch"
+  transfer_started_epoch="$(date +%s)"
+  transfer_last_sample_millis="$(date +%s%3N)"
+  transfer_last_progress_epoch="$transfer_started_epoch"
   transfer_max_deadline_epoch=$((transfer_started_epoch + DOWNLOAD_MAX_TIMEOUT_SECONDS))
   if (( task_deadline_epoch > 0 && task_deadline_epoch < transfer_max_deadline_epoch )); then
     transfer_max_deadline_epoch="$task_deadline_epoch"
@@ -493,13 +493,16 @@ update_transfer_state() {
   (( total == 0 || downloaded <= total )) || downloaded="$total"
   (( total_layers == 0 || completed_layers <= total_layers )) || completed_layers="$total_layers"
 
-  local now elapsed delta speed=0 byte_progressed=false
+  local now now_millis elapsed_millis delta speed=0 byte_progressed=false
   now="$(date +%s)"
-  elapsed=$((now - transfer_last_sample_epoch))
-  if (( elapsed > 0 )); then
+  now_millis="$(date +%s%3N)"
+  elapsed_millis=$((now_millis - transfer_last_sample_millis))
+  if (( elapsed_millis > 0 )); then
     delta=$((downloaded - transfer_last_sample_bytes))
     if (( delta > 0 )); then
-      speed=$(((delta + elapsed - 1) / elapsed))
+      # Use the real sub-second sampling interval so a small first chunk does
+      # not report a zero speed merely because it arrived within one second.
+      speed=$(((delta * 1000 + elapsed_millis - 1) / elapsed_millis))
       if (( transfer_speed_bytes_per_second > 0 && speed > 0 )); then
         transfer_speed_bytes_per_second=$(((transfer_speed_bytes_per_second * 3 + speed) / 4))
       elif (( speed > 0 )); then
@@ -510,7 +513,7 @@ update_transfer_state() {
     elif (( now - transfer_last_progress_epoch >= 5 )); then
       transfer_speed_bytes_per_second=0
     fi
-    transfer_last_sample_epoch="$now"
+    transfer_last_sample_millis="$now_millis"
     transfer_last_sample_bytes="$downloaded"
   fi
 

@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.23",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 3,
+  "manual": {
+    "reason": "v2.0.23 修复更新代理以整秒采样导致小型或快速 JAR 下载显示 0 B/s 的问题。更新代理版本 3 仍要求同步安装宿主机脚本、systemd unit 与配置。",
+    "instructions": "先按 Release 的验签与校验说明安装 host package，并执行 install-update-agent.sh；确认 curl 支持 Unix socket、Docker daemon 的镜像代理配置可用，以及 /etc/xianyu2/update-agent.conf 配置正确；最后由 root 执行 xianyu2-update-agent --apply-manual-release v2.0.23。"
+  }
+}

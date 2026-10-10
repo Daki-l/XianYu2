@@ -288,15 +288,20 @@ run_agent_in_background() {
 
 wait_for_live_transfer() {
   local phase="$1"
-  local attempt status_snapshot='status.json is unavailable'
+  local attempt status_snapshot='status.json is unavailable' last_transfer_status='no downloading transfer status was observed'
   for attempt in $(seq 1 "$live_transfer_wait_attempts"); do
-    if [[ -f "$status_dir/status.json" ]] && jq -e --arg phase "$phase" '
-      .status == "DOWNLOADING" and .transfer.phase == $phase
-      and (.transfer.downloadedBytes > 0)
-      and (.transfer.totalBytes > .transfer.downloadedBytes)
-      and (.transfer.speedBytesPerSecond > 0)
-    ' "$status_dir/status.json" >/dev/null 2>&1; then
-      return 0
+    if [[ -f "$status_dir/status.json" ]]; then
+      if jq -e --arg phase '.status == "DOWNLOADING" and .transfer.phase == $phase' "$status_dir/status.json" >/dev/null 2>&1; then
+        last_transfer_status="$(cat "$status_dir/status.json")"
+      fi
+      if jq -e --arg phase "$phase" '
+        .status == "DOWNLOADING" and .transfer.phase == $phase
+        and (.transfer.downloadedBytes > 0)
+        and (.transfer.totalBytes > .transfer.downloadedBytes)
+        and (.transfer.speedBytesPerSecond > 0)
+      ' "$status_dir/status.json" >/dev/null 2>&1; then
+        return 0
+      fi
     fi
     sleep 0.1
   done
@@ -305,7 +310,7 @@ wait_for_live_transfer() {
   if [[ -f "$status_dir/status.json" ]]; then
     status_snapshot="$(cat "$status_dir/status.json")"
   fi
-  fail "Did not observe live ${phase} transfer progress; status: ${status_snapshot}; agent log: $(cat "$agent_log" 2>/dev/null || true)"
+  fail "Did not observe live ${phase} transfer progress; last transfer status: ${last_transfer_status}; final status: ${status_snapshot}; agent log: $(cat "$agent_log" 2>/dev/null || true)"
 }
 
 wait_for_background_agent() {
