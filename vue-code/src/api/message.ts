@@ -66,7 +66,7 @@ export function getContextMessages(data: {
   sid: string;
   limit?: number;
   offset?: number;
-}) {
+}, options: { signal?: AbortSignal; silent?: boolean } = {}) {
   return request<ChatMessage[]>({
     url: '/msg/context',
     method: 'POST',
@@ -75,7 +75,9 @@ export function getContextMessages(data: {
       sid: data.sid,
       limit: data.limit || 20,
       offset: data.offset || 0
-    }
+    },
+    signal: options.signal,
+    silent: options.silent
   });
 }
 
@@ -83,12 +85,13 @@ export function syncContextMessages(data: {
   xianyuAccountId: number;
   sid: string;
   maxMessages?: number;
-}, silent = false) {
+}, options: { signal?: AbortSignal; silent?: boolean } = {}) {
   return request<{ received: number; saved: number }>({
     url: '/msg/context/sync',
     method: 'POST',
     data,
-    silent
+    signal: options.signal,
+    silent: options.silent
   });
 }
 

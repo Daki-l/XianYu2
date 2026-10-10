@@ -37,8 +37,11 @@ const failedImages = ref(new Set<string>())
 const contextMessages = ref<ChatMessage[]>([])
 const takeoverOperationResults = ref<ChatMessage[]>([])
 const contextLoading = ref(false)
-const platformSyncing = ref(false)
-const synchronizedSessions = ref(new Set<string>())
+const syncingPlatformSessions = ref(new Set<string>())
+const platformSyncRequests = new Map<string, Promise<void>>()
+let activeContextRequest: AbortController | undefined
+let contextRequestVersion = 0
+let conversationSelectionVersion = 0
 const messageText = ref('')
 const imageUrls = ref('')
 const showImageUploader = ref(false)
@@ -135,7 +138,7 @@ const forceEndHumanTakeover = async () => {
   endingHumanTakeover.value = true
   try {
     await endHumanTakeover({ xianyuAccountId: accountId, sid })
-    await loadConversationContext(false, false)
+    await loadConversationContext(false)
     if (selectedAccountId.value === accountId && selected.value?.sid === sid) {
       takeoverOperationResults.value = [createTakeoverOperationResult(accountId, sid)]
       await scrollToBottom()
@@ -187,48 +190,84 @@ const conversations = computed(() => {
 
 const selected = computed(() => conversations.value.find(item => item.sid === selectedSid.value) || conversations.value[0])
 const incomingCount = computed(() => messageList.value.filter(message => message.senderUserId !== getCurrentAccountUnb.value).length)
+const sessionKey = (accountId: number, sid: string) => `${accountId}:${sid}`
+const platformSyncing = computed(() => Boolean(
+  selectedAccountId.value
+  && selected.value
+  && syncingPlatformSessions.value.has(sessionKey(selectedAccountId.value, selected.value.sid))
+))
 
 const scrollToBottom = () => nextTick(() => {
   if (messagesRef.value) messagesRef.value.scrollTop = messagesRef.value.scrollHeight
 })
 
-const loadConversationContext = async (syncPlatform = false, showLoading = true) => {
+const loadConversationContext = async (showLoading = true) => {
   if (!selectedAccountId.value || !selected.value) {
     contextMessages.value = []
     return
   }
   const accountId = selectedAccountId.value
   const sid = selected.value.sid
+  activeContextRequest?.abort()
+  const requestController = new AbortController()
+  activeContextRequest = requestController
+  const requestVersion = ++contextRequestVersion
   const displayLoading = showLoading && contextMessages.value.length === 0
   if (displayLoading) contextLoading.value = true
   try {
-    const response = await getContextMessages({ xianyuAccountId: accountId, sid, limit: 500, offset: 0 })
-    if (selectedAccountId.value === accountId && selected.value?.sid === sid) {
+    const response = await getContextMessages(
+      { xianyuAccountId: accountId, sid, limit: 500, offset: 0 },
+      { signal: requestController.signal, silent: true }
+    )
+    if (requestVersion === contextRequestVersion
+      && selectedAccountId.value === accountId && selected.value?.sid === sid) {
       contextMessages.value = response.data || []
       await scrollToBottom()
     }
   } catch (error: any) {
+    if (error?.code === 'ERR_CANCELED') return
     if (showLoading && !error?.messageShown) showWarning(error?.message || '本地会话读取失败')
-    if (!contextMessages.value.length) contextMessages.value = selected.value?.messages || []
-  } finally {
-    if (displayLoading) contextLoading.value = false
-  }
-  if (!syncPlatform) return
-  platformSyncing.value = true
-  try {
-    await syncContextMessages({ xianyuAccountId: accountId, sid, maxMessages: 500 }, true)
-    synchronizedSessions.value = new Set([...synchronizedSessions.value, `${accountId}:${sid}`])
-    const response = await getContextMessages({ xianyuAccountId: accountId, sid, limit: 500, offset: 0 })
-    if (selectedAccountId.value === accountId && selected.value?.sid === sid) {
-      contextMessages.value = response.data || contextMessages.value
-      await scrollToBottom()
+    if (requestVersion === contextRequestVersion && !contextMessages.value.length
+      && selectedAccountId.value === accountId && selected.value?.sid === sid) {
+      contextMessages.value = selected.value.messages || []
     }
-  } catch (error: any) {
-    // 平台同步失败时继续显示本地消息，避免一次超时让整个会话区域变空。
-    if (!error?.messageShown) showWarning(error?.message || '平台历史同步失败，已保留本地会话记录')
   } finally {
-    platformSyncing.value = false
+    if (activeContextRequest === requestController) activeContextRequest = undefined
+    if (displayLoading && requestVersion === contextRequestVersion) contextLoading.value = false
   }
+}
+
+const syncCurrentConversationHistory = async () => {
+  if (!selectedAccountId.value || !selected.value) return
+  const accountId = selectedAccountId.value
+  const sid = selected.value.sid
+  const key = sessionKey(accountId, sid)
+  const running = platformSyncRequests.get(key)
+  if (running) return running
+
+  const syncTask = (async () => {
+    syncingPlatformSessions.value = new Set([...syncingPlatformSessions.value, key])
+    try {
+      await syncContextMessages({ xianyuAccountId: accountId, sid, maxMessages: 500 })
+      if (selectedAccountId.value === accountId && selected.value?.sid === sid) {
+        await loadConversationContext(false)
+        showSuccess('完整历史已同步')
+      }
+    } catch (error: any) {
+      // 平台同步失败时继续显示本地消息，避免一次超时让整个会话区域变空。
+      if (!error?.messageShown) showWarning(error?.message || '平台历史同步失败，已保留本地会话记录')
+    } finally {
+      const remaining = new Set(syncingPlatformSessions.value)
+      remaining.delete(key)
+      syncingPlatformSessions.value = remaining
+    }
+  })()
+  platformSyncRequests.set(key, syncTask)
+  const clearInFlightRequest = () => {
+    if (platformSyncRequests.get(key) === syncTask) platformSyncRequests.delete(key)
+  }
+  void syncTask.then(clearInFlightRequest, clearInFlightRequest)
+  return syncTask
 }
 
 const loadQuickReplies = async () => {
@@ -280,7 +319,7 @@ const sendCurrentMessage = async () => {
     messageText.value = ''
     imageUrls.value = ''
     showImageUploader.value = false
-    await loadConversationContext(false, false)
+    await loadConversationContext(false)
     showSuccess('消息发送成功')
   } catch (error: any) {
     showError(error?.message || '消息发送失败')
@@ -297,7 +336,7 @@ const refresh = async () => {
     await loadMessages(true)
     if (selected.value && selected.value.latest.id !== previousMessageId) {
       // 仅在会话出现新消息时更新正文，避免轮询造成滚动位置跳动。
-      await loadConversationContext(false, false)
+      await loadConversationContext(false)
     }
   } finally {
     refreshing.value = false
@@ -310,17 +349,22 @@ watch(conversations, value => {
 }, { immediate: true })
 
 watch(selectedAccountId, () => {
+  activeContextRequest?.abort()
+  activeContextRequest = undefined
+  contextRequestVersion++
   profiles.value = {}
   loadedProfileKeys.value = new Set()
   failedImages.value = new Set()
-  synchronizedSessions.value = new Set()
   takeoverOperationResults.value = []
 })
 
 watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) => {
+  const selectionVersion = ++conversationSelectionVersion
+  activeContextRequest?.abort()
   contextMessages.value = []
   takeoverOperationResults.value = []
   await loadQuickReplies()
+  if (selectionVersion !== conversationSelectionVersion) return
   if (!accountId || !sid) return
   const profileKey = `${accountId}:${sid}`
   if (!loadedProfileKeys.value.has(profileKey)) {
@@ -335,8 +379,8 @@ watch([selectedAccountId, () => selected.value?.sid], async ([accountId, sid]) =
       loadedProfileKeys.value = new Set([...loadedProfileKeys.value, profileKey])
     }
   }
-  const key = `${accountId}:${sid}`
-  await loadConversationContext(!synchronizedSessions.value.has(key))
+  if (selectionVersion !== conversationSelectionVersion) return
+  await loadConversationContext()
 }, { immediate: true })
 
 let timer: ReturnType<typeof setInterval> | undefined
@@ -349,7 +393,7 @@ onMounted(async () => {
   timer = setInterval(() => {
     if (document.visibilityState !== 'visible') return
     if (hasActiveTimelineStatus.value) {
-      void loadConversationContext(false, false)
+      void loadConversationContext(false)
       return
     }
     void refresh()
@@ -359,6 +403,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  activeContextRequest?.abort()
   if (timer) clearInterval(timer)
   if (countdownTimer) clearInterval(countdownTimer)
   document.removeEventListener('visibilitychange', refreshWhenVisible)
@@ -411,7 +456,7 @@ onBeforeUnmount(() => {
             <img v-if="imageAvailable(selected.buyerAvatar)" class="chat__avatar chat__avatar--image" :src="selected.buyerAvatar" alt="" @error="markImageError(selected.buyerAvatar)">
             <div v-else class="chat__avatar">{{ selected.buyerName.slice(0, 1) }}</div>
             <div><strong>{{ selected.buyerName }}</strong><span>{{ selected.goodsTitle }}</span></div>
-            <button class="workbench__btn" :disabled="platformSyncing" @click="loadConversationContext(true)">
+            <button class="workbench__btn" :disabled="platformSyncing" @click="syncCurrentConversationHistory">
               {{ platformSyncing ? '同步历史中' : '同步完整历史' }}
             </button>
           </header>

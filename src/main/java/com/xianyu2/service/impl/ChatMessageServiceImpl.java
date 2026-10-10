@@ -18,6 +18,7 @@ import com.xianyu2.event.chatMessageEvent.ChatMessageData;
 import com.xianyu2.event.chatMessageEvent.ChatMessageReceivedEvent;
 import com.xianyu2.service.ChatMessageService;
 import com.xianyu2.service.ChatMessagePersistenceService;
+import com.xianyu2.service.PlatformHistorySyncCoordinator;
 import com.xianyu2.service.PlatformHistoryMessageParser;
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.service.reply.HumanTakeoverManager;
@@ -77,6 +78,9 @@ public class ChatMessageServiceImpl implements ChatMessageService {
 
     @Autowired
     private ApplicationEventPublisher eventPublisher;
+
+    @Autowired
+    private PlatformHistorySyncCoordinator platformHistorySyncCoordinator;
     
     @Override
     public List<XianyuChatMessage> getMessagesByAccountId(Long accountId, int page, int pageSize) {
@@ -236,10 +240,15 @@ public class ChatMessageServiceImpl implements ChatMessageService {
         }
         int maxMessages = reqDTO.getMaxMessages() == null ? 500
                 : Math.max(20, Math.min(reqDTO.getMaxMessages(), 500));
+        return platformHistorySyncCoordinator.execute(reqDTO.getXianyuAccountId(), reqDTO.getSid(),
+                () -> syncContextMessages(reqDTO.getXianyuAccountId(), account, reqDTO.getSid(), maxMessages));
+    }
+
+    private ResultObject<?> syncContextMessages(Long accountId, XianyuAccount account, String sid, int maxMessages) {
         List<java.util.Map<String, Object>> history = webSocketService.listConversationHistory(
-                reqDTO.getXianyuAccountId(), reqDTO.getSid(), maxMessages);
+                accountId, sid, maxMessages);
         List<XianyuChatMessage> messages = new PlatformHistoryMessageParser(objectMapper).parse(
-                reqDTO.getXianyuAccountId(), reqDTO.getSid(), history);
+                accountId, sid, history);
         int inserted = 0;
         String ownUserId = account.getUnb();
         for (XianyuChatMessage message : messages) {
@@ -249,7 +258,7 @@ public class ChatMessageServiceImpl implements ChatMessageService {
             }
         }
         log.info("【账号{}】会话历史同步完成: sid={}, received={}, parsed={}, newlyInserted={}",
-                reqDTO.getXianyuAccountId(), reqDTO.getSid(), history.size(), messages.size(), inserted);
+                accountId, sid, history.size(), messages.size(), inserted);
         return ResultObject.success(java.util.Map.of("received", history.size(), "saved", inserted));
     }
 

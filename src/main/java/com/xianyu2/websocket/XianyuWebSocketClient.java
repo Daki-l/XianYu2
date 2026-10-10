@@ -8,8 +8,13 @@ import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.CompletableFuture;
@@ -24,6 +29,12 @@ import java.util.function.Consumer;
  */
 @Slf4j
 public class XianyuWebSocketClient extends WebSocketClient {
+
+    static final int MAX_HISTORY_PAGES = 30;
+    static final long MAX_HISTORY_PAGE_RESPONSE_BYTES = 1L * 1024 * 1024;
+    static final long MAX_HISTORY_TOTAL_RESPONSE_BYTES = 8L * 1024 * 1024;
+    private static final int HISTORY_PAGE_SIZE = 20;
+    private static final int MAX_HISTORY_RESPONSE_DEPTH = 64;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String accountId;
@@ -216,6 +227,10 @@ public class XianyuWebSocketClient extends WebSocketClient {
             
             if (message == null || message.isEmpty()) {
                 log.warn("【账号{}】收到空消息", accountId);
+                return;
+            }
+            if (isOversizedHistoryPageResponse(message)) {
+                rejectOversizedHistoryPageResponse(message);
                 return;
             }
 
@@ -647,18 +662,50 @@ public class XianyuWebSocketClient extends WebSocketClient {
         }
         int safeMaximum = Math.max(20, Math.min(maxMessages, 500));
         long cursor = 9007199254740991L;
-        java.util.List<Map<String, Object>> messages = new java.util.ArrayList<>();
+        List<Map<String, Object>> messages = new ArrayList<>();
+        Set<Long> visitedCursors = new HashSet<>();
+        long totalResponseBytes = 0;
+        int pageCount = 0;
         boolean hasMore = true;
         while (hasMore && messages.size() < safeMaximum) {
+            if (pageCount >= MAX_HISTORY_PAGES) {
+                logHistoryPaginationStopped(cleanCid, "达到最大页数", pageCount, messages.size(), totalResponseBytes, cursor);
+                break;
+            }
+            if (!visitedCursors.add(cursor)) {
+                logHistoryPaginationStopped(cleanCid, "检测到重复cursor", pageCount, messages.size(), totalResponseBytes, cursor);
+                break;
+            }
+
             Map<String, Object> response = requestConversationHistoryPage(cleanCid, cursor);
+            pageCount++;
+            long pageResponseBytes = estimateHistoryResponseBytes(response, MAX_HISTORY_PAGE_RESPONSE_BYTES);
+            if (pageResponseBytes > MAX_HISTORY_PAGE_RESPONSE_BYTES) {
+                log.warn("{}历史消息分页已停止: cid={}, reason=单页响应超过限制, pages={}, collected={}, " +
+                                "pageResponseBytesLimit={}, totalResponseBytes={}, cursor={}",
+                        logPrefix(), cleanCid, pageCount, messages.size(), MAX_HISTORY_PAGE_RESPONSE_BYTES,
+                        totalResponseBytes, cursor);
+                break;
+            }
+            if (pageResponseBytes > MAX_HISTORY_TOTAL_RESPONSE_BYTES - totalResponseBytes) {
+                log.warn("{}历史消息分页已停止: cid={}, reason=累计响应超过限制, pages={}, collected={}, " +
+                                "pageResponseBytes={}, totalResponseBytesLimit={}, cursor={}",
+                        logPrefix(), cleanCid, pageCount, messages.size(), pageResponseBytes,
+                        MAX_HISTORY_TOTAL_RESPONSE_BYTES, cursor);
+                break;
+            }
+            totalResponseBytes += pageResponseBytes;
+
             Map<String, Object> body = map(response.get("body"));
             Object modelsValue = body.get("userMessageModels");
+            int validModelsInPage = 0;
             if (modelsValue instanceof java.util.List<?> models) {
                 for (Object model : models) {
                     if (model instanceof Map<?, ?> source) {
                         Map<String, Object> normalized = new HashMap<>();
                         source.forEach((key, value) -> normalized.put(String.valueOf(key), value));
                         messages.add(normalized);
+                        validModelsInPage++;
                         if (messages.size() >= safeMaximum) {
                             break;
                         }
@@ -670,7 +717,22 @@ public class XianyuWebSocketClient extends WebSocketClient {
                     || "1".equals(String.valueOf(hasMoreValue))
                     || "true".equalsIgnoreCase(String.valueOf(hasMoreValue));
             Long nextCursor = longValue(body.get("nextCursor"));
-            if (!hasMore || nextCursor == null || nextCursor == cursor) {
+            if (!hasMore) {
+                break;
+            }
+            if (validModelsInPage == 0) {
+                logHistoryPaginationStopped(cleanCid, "空页或无有效消息", pageCount, messages.size(),
+                        totalResponseBytes, cursor);
+                break;
+            }
+            if (nextCursor == null) {
+                logHistoryPaginationStopped(cleanCid, "缺少nextCursor", pageCount, messages.size(),
+                        totalResponseBytes, cursor);
+                break;
+            }
+            if (visitedCursors.contains(nextCursor)) {
+                logHistoryPaginationStopped(cleanCid, "检测到重复nextCursor", pageCount, messages.size(),
+                        totalResponseBytes, nextCursor);
                 break;
             }
             cursor = nextCursor;
@@ -678,7 +740,180 @@ public class XianyuWebSocketClient extends WebSocketClient {
         return messages;
     }
 
-    private Map<String, Object> requestConversationHistoryPage(String cid, long cursor) {
+    private void logHistoryPaginationStopped(String cid, String reason, int pageCount, int messageCount,
+                                             long totalResponseBytes, long cursor) {
+        log.warn("{}历史消息分页已停止: cid={}, reason={}, pages={}, collected={}, responseBytes={}, cursor={}",
+                logPrefix(), cid, reason, pageCount, messageCount, totalResponseBytes, cursor);
+    }
+
+    private long estimateHistoryResponseBytes(Object value, long limit) {
+        return estimateHistoryResponseBytes(value, limit, new IdentityHashMap<>(), 0);
+    }
+
+    private long estimateHistoryResponseBytes(Object value, long limit,
+                                              IdentityHashMap<Object, Boolean> visited, int depth) {
+        if (value == null) {
+            return 4;
+        }
+        if (depth > MAX_HISTORY_RESPONSE_DEPTH) {
+            return limit + 1;
+        }
+        if (value instanceof CharSequence text) {
+            return estimateJsonTextBytes(text, limit);
+        }
+        if (value instanceof Number || value instanceof Boolean || value instanceof Character) {
+            return Math.min(limit + 1, String.valueOf(value).length() + 8L);
+        }
+        if (value instanceof byte[] bytes) {
+            return Math.min(limit + 1, bytes.length);
+        }
+        if (value instanceof Map<?, ?> map) {
+            if (visited.put(value, Boolean.TRUE) != null) {
+                return 4;
+            }
+            long total = 2;
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                long keyBytes = entry.getKey() instanceof CharSequence key
+                        ? estimateJsonTextBytes(key, limit) : 32;
+                total = addHistoryResponseBytes(total, keyBytes + 1, limit);
+                total = addHistoryResponseBytes(total,
+                        estimateHistoryResponseBytes(entry.getValue(), limit, visited, depth + 1) + 1, limit);
+                if (total > limit) {
+                    return total;
+                }
+            }
+            return total;
+        }
+        if (value instanceof Iterable<?> values) {
+            if (visited.put(value, Boolean.TRUE) != null) {
+                return 4;
+            }
+            long total = 2;
+            for (Object child : values) {
+                total = addHistoryResponseBytes(total,
+                        estimateHistoryResponseBytes(child, limit, visited, depth + 1) + 1, limit);
+                if (total > limit) {
+                    return total;
+                }
+            }
+            return total;
+        }
+        if (value instanceof Object[] values) {
+            if (visited.put(value, Boolean.TRUE) != null) {
+                return 4;
+            }
+            long total = 2;
+            for (Object child : values) {
+                total = addHistoryResponseBytes(total,
+                        estimateHistoryResponseBytes(child, limit, visited, depth + 1) + 1, limit);
+                if (total > limit) {
+                    return total;
+                }
+            }
+            return total;
+        }
+        return 64;
+    }
+
+    private long estimateJsonTextBytes(CharSequence value, long limit) {
+        long total = 2;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            long charBytes;
+            if (current == '"' || current == '\\') {
+                charBytes = 2;
+            } else if (current < 0x20) {
+                charBytes = 6;
+            } else if (current <= 0x7F) {
+                charBytes = 1;
+            } else if (current <= 0x7FF) {
+                charBytes = 2;
+            } else if (Character.isHighSurrogate(current) && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                charBytes = 4;
+                index++;
+            } else {
+                charBytes = 3;
+            }
+            total = addHistoryResponseBytes(total, charBytes, limit);
+            if (total > limit) {
+                return total;
+            }
+        }
+        return total;
+    }
+
+    private long addHistoryResponseBytes(long current, long addition, long limit) {
+        if (current > limit || addition > limit - current) {
+            return limit + 1;
+        }
+        return current + addition;
+    }
+
+    private boolean isOversizedHistoryPageResponse(String message) {
+        return !pendingPayloadResponses.isEmpty()
+                && message.contains("\"userMessageModels\"")
+                && exceedsUtf8ByteLimit(message, MAX_HISTORY_PAGE_RESPONSE_BYTES);
+    }
+
+    private void rejectOversizedHistoryPageResponse(String message) {
+        String mid = extractResponseMid(message);
+        if (mid != null) {
+            CompletableFuture<Map<String, Object>> future = pendingPayloadResponses.remove(mid);
+            if (future != null && !future.isDone()) {
+                future.completeExceptionally(new IllegalStateException("平台历史消息单页响应超过大小限制"));
+            }
+        }
+        log.warn("{}已拒绝超出大小限制的历史消息页: mid={}, pageResponseBytesLimit={}",
+                logPrefix(), mid, MAX_HISTORY_PAGE_RESPONSE_BYTES);
+    }
+
+    private String extractResponseMid(String message) {
+        int headersIndex = message.indexOf("\"headers\"");
+        if (headersIndex < 0) {
+            return null;
+        }
+        int midIndex = message.indexOf("\"mid\"", headersIndex);
+        if (midIndex < 0) {
+            return null;
+        }
+        int separatorIndex = message.indexOf(':', midIndex + 5);
+        if (separatorIndex < 0) {
+            return null;
+        }
+        int valueStart = message.indexOf('"', separatorIndex + 1);
+        if (valueStart < 0) {
+            return null;
+        }
+        int valueEnd = message.indexOf('"', valueStart + 1);
+        return valueEnd < 0 ? null : message.substring(valueStart + 1, valueEnd);
+    }
+
+    private boolean exceedsUtf8ByteLimit(CharSequence value, long limit) {
+        long total = 0;
+        for (int index = 0; index < value.length(); index++) {
+            char current = value.charAt(index);
+            long charBytes;
+            if (current <= 0x7F) {
+                charBytes = 1;
+            } else if (current <= 0x7FF) {
+                charBytes = 2;
+            } else if (Character.isHighSurrogate(current) && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                charBytes = 4;
+                index++;
+            } else {
+                charBytes = 3;
+            }
+            if (charBytes > limit - total) {
+                return true;
+            }
+            total += charBytes;
+        }
+        return false;
+    }
+
+    protected Map<String, Object> requestConversationHistoryPage(String cid, long cursor) {
         String mid = generateMid();
         Map<String, Object> request = new HashMap<>();
         request.put("lwp", "/r/MessageManager/listUserMessages");
@@ -688,7 +923,7 @@ public class XianyuWebSocketClient extends WebSocketClient {
             headers.put("sid", sessionId);
         }
         request.put("headers", headers);
-        request.put("body", java.util.List.of(cid + "@goofish", false, cursor, 20, false));
+        request.put("body", java.util.List.of(cid + "@goofish", false, cursor, HISTORY_PAGE_SIZE, false));
 
         CompletableFuture<Map<String, Object>> future = new CompletableFuture<>();
         pendingPayloadResponses.put(mid, future);

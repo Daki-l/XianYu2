@@ -13,6 +13,7 @@ import com.xianyu2.mapper.XianyuChatMessageMapper;
 import com.xianyu2.mapper.XianyuGoodsAutoReplyRecordMapper;
 import com.xianyu2.mapper.XianyuHumanInterventionRecordMapper;
 import com.xianyu2.service.ChatMessagePersistenceService;
+import com.xianyu2.service.PlatformHistorySyncCoordinator;
 import com.xianyu2.service.WebSocketService;
 import com.xianyu2.service.reply.HumanTakeoverManager;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,6 +72,7 @@ class ChatMessageServiceImplTest {
         ReflectionTestUtils.setField(service, "chatMessagePersistenceService", persistenceService);
         ReflectionTestUtils.setField(service, "accountMapper", accountMapper);
         ReflectionTestUtils.setField(service, "webSocketService", webSocketService);
+        ReflectionTestUtils.setField(service, "platformHistorySyncCoordinator", new PlatformHistorySyncCoordinator());
         ReflectionTestUtils.setField(service, "objectMapper", new ObjectMapper());
         ReflectionTestUtils.setField(service, "eventPublisher", eventPublisher);
         XianyuAccount account = new XianyuAccount();
