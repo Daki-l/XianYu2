@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue'
 import {
+  cancelSystemUpdate,
   checkUpdate,
   getSystemUpdateStatus,
   getVersion,
   requestSystemUpdate,
-  type SystemUpdateStatus
+  type SystemUpdateStatus,
+  type SystemUpdateTransfer
 } from '@/api/system'
 import IconClose from '@/components/icons/IconClose.vue'
 import IconCheck from '@/components/icons/IconCheck.vue'
@@ -18,6 +20,8 @@ const appVersion = __APP_VERSION__ || '0.0.0-dev'
 const visible = ref(false)
 const loading = ref(false)
 const submitting = ref(false)
+const cancelling = ref(false)
+const cancelRequested = ref(false)
 const localError = ref('')
 const updateTask = ref<SystemUpdateStatus | null>(null)
 const updateInfo = ref<{
@@ -48,6 +52,34 @@ const progressPercent = computed(() => {
   return Math.min(100, Math.max(0, progress))
 })
 
+const transfer = computed(() => updateTask.value?.status === 'DOWNLOADING' ? updateTask.value.transfer : undefined)
+
+const transferProgressPercent = computed<number | null>(() => {
+  const currentTransfer = transfer.value
+  if (!currentTransfer) return null
+  if (currentTransfer.totalBytes > 0) {
+    return Math.min(100, Math.max(0, Math.round((currentTransfer.downloadedBytes / currentTransfer.totalBytes) * 100)))
+  }
+  if (currentTransfer.totalLayers && currentTransfer.totalLayers > 0) {
+    return Math.min(100, Math.max(0, Math.round(((currentTransfer.completedLayers || 0) / currentTransfer.totalLayers) * 100)))
+  }
+  return 0
+})
+
+const visibleProgressPercent = computed(() => transferProgressPercent.value ?? progressPercent.value)
+
+const isIndeterminateStage = computed(() => isUpdateRunning.value && !transfer.value)
+
+const progressText = computed(() => {
+  const currentTransfer = transfer.value
+  if (!currentTransfer) return isIndeterminateStage.value ? '进行中' : `${visibleProgressPercent.value}%`
+  if (currentTransfer.totalBytes > 0) return `${visibleProgressPercent.value}%`
+  if (currentTransfer.totalLayers && currentTransfer.totalLayers > 0) {
+    return `${currentTransfer.completedLayers || 0}/${currentTransfer.totalLayers} 层`
+  }
+  return '准备中'
+})
+
 const stageLabels: Record<SystemUpdateStatus['status'], string> = {
   IDLE: '等待更新',
   REQUESTED: '任务已提交',
@@ -55,28 +87,61 @@ const stageLabels: Record<SystemUpdateStatus['status'], string> = {
   DOWNLOADING: '下载更新',
   VERIFYING: '校验文件',
   BACKING_UP: '备份数据库',
-  INSTALLING: '备份并安装',
-  RESTARTING: '重启服务',
+  INSTALLING: '准备切换',
+  RESTARTING: '容器切换',
   HEALTH_CHECKING: '健康检查',
   SUCCESS: '更新完成',
   FAILED: '更新失败',
   MANUAL_REQUIRED: '需要人工处理'
 }
 
+const transferStageLabels: Record<SystemUpdateTransfer['phase'], string> = {
+  JAR_DOWNLOAD: '下载应用 JAR',
+  IMAGE_PULL: '预拉取应用镜像'
+}
+
 const stageLabel = computed(() => {
+  if (transfer.value) return transferStageLabels[transfer.value.phase]
   return updateTask.value ? stageLabels[updateTask.value.status] : ''
 })
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`
 }
 
 const downloadText = computed(() => {
   const task = updateTask.value
-  if (!task || !task.totalBytes) return ''
-  return `${formatBytes(task.downloadedBytes)} / ${formatBytes(task.totalBytes)}`
+  const currentTransfer = task?.transfer
+  if (!currentTransfer && task?.status !== 'DOWNLOADING') return ''
+  const downloadedBytes = currentTransfer?.downloadedBytes ?? task?.downloadedBytes ?? 0
+  const totalBytes = currentTransfer?.totalBytes ?? task?.totalBytes ?? 0
+  if (!totalBytes) return ''
+  return `${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)}`
+})
+
+const transferSpeedText = computed(() => {
+  const speed = transfer.value?.speedBytesPerSecond || 0
+  return speed > 0 ? `${formatBytes(speed)}/秒` : ''
+})
+
+const transferEtaText = computed(() => {
+  const seconds = transfer.value?.etaSeconds
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) return ''
+  if (seconds < 60) return '预计不足 1 分钟'
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return `预计约 ${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  return `预计约 ${hours} 小时 ${minutes % 60} 分钟`
+})
+
+const transferLayerText = computed(() => {
+  const currentTransfer = transfer.value
+  if (currentTransfer?.phase !== 'IMAGE_PULL' || !currentTransfer.totalLayers) return ''
+  return `${currentTransfer.completedLayers || 0} / ${currentTransfer.totalLayers} 层`
 })
 
 const taskUpdatedAt = computed(() => {
@@ -119,6 +184,7 @@ const refreshTask = async () => {
     const response = await getSystemUpdateStatus()
     if (!response.data) return
     updateTask.value = response.data
+    if (!response.data.canCancel) cancelRequested.value = false
     pollDelay = 2000
     if (!response.data.active) {
       await reloadAfterSuccessfulUpdate()
@@ -150,6 +216,7 @@ const open = async () => {
   visible.value = true
   loading.value = true
   localError.value = ''
+  cancelRequested.value = false
   try {
     const [versionResult, statusResult] = await Promise.allSettled([
       checkUpdate(),
@@ -198,6 +265,7 @@ const startUpdate = async () => {
   const session = dialogSession
   submitting.value = true
   localError.value = ''
+  cancelRequested.value = false
   try {
     const response = await requestSystemUpdate()
     if (visible.value && session === dialogSession && response.data) {
@@ -215,6 +283,27 @@ const startUpdate = async () => {
     }
   } finally {
     submitting.value = false
+  }
+}
+
+const cancelUpdate = async () => {
+  if (cancelling.value || !updateTask.value?.canCancel) return
+  const session = dialogSession
+  cancelling.value = true
+  localError.value = ''
+  try {
+    const response = await cancelSystemUpdate()
+    if (visible.value && session === dialogSession && response.data) {
+      updateTask.value = response.data
+      cancelRequested.value = true
+      startPolling()
+    }
+  } catch (error: any) {
+    if (visible.value && session === dialogSession) {
+      localError.value = error.message || '取消更新请求失败'
+    }
+  } finally {
+    cancelling.value = false
   }
 }
 
@@ -280,16 +369,22 @@ defineExpose({ open })
             >
               <div class="progress-heading">
                 <span>{{ stageLabel }}</span>
-                <strong>{{ progressPercent }}%</strong>
+                <strong>{{ progressText }}</strong>
               </div>
-              <div class="progress-track">
-                <span :style="{ width: `${progressPercent}%` }"></span>
+              <div class="progress-track" :class="{ 'is-indeterminate': isIndeterminateStage }">
+                <span :style="{ width: `${visibleProgressPercent}%` }"></span>
               </div>
               <div class="progress-message">{{ updateTask.message }}</div>
               <div v-if="updateTask.detail" class="progress-message">{{ updateTask.detail }}</div>
-              <div v-if="downloadText || taskUpdatedAt" class="progress-meta">
+              <div v-if="downloadText || transferSpeedText || transferEtaText || transferLayerText || taskUpdatedAt" class="progress-meta">
                 <span v-if="downloadText">{{ downloadText }}</span>
+                <span v-if="transferSpeedText">{{ transferSpeedText }}</span>
+                <span v-if="transferEtaText">{{ transferEtaText }}</span>
+                <span v-if="transferLayerText">{{ transferLayerText }}</span>
                 <span v-if="taskUpdatedAt">更新于 {{ taskUpdatedAt }}</span>
+              </div>
+              <div v-if="transfer?.phase === 'IMAGE_PULL' && transfer.currentLayer" class="progress-layer">
+                当前层 {{ transfer.currentLayer }}
               </div>
             </div>
             <div v-if="localError" class="update-progress is-failed">{{ localError }}</div>
@@ -309,6 +404,14 @@ defineExpose({ open })
           <!-- Footer -->
           <div v-if="!loading && updateInfo" class="modal-footer">
             <button class="btn btn-secondary" @click="close">关闭</button>
+            <button
+              v-if="updateTask?.canCancel"
+              class="btn btn-secondary"
+              :disabled="cancelling || cancelRequested"
+              @click="cancelUpdate"
+            >
+              {{ cancelling ? '正在取消' : cancelRequested ? '取消请求已提交' : '取消下载' }}
+            </button>
             <button
               v-if="isUpdateAvailable"
               class="btn btn-primary"
@@ -560,6 +663,16 @@ defineExpose({ open })
   transition: width .25s ease;
 }
 
+.progress-track.is-indeterminate span {
+  width: 38% !important;
+  animation: progress-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes progress-sweep {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(300%); }
+}
+
 .progress-message {
   color: #344054;
   line-height: 1.5;
@@ -569,6 +682,18 @@ defineExpose({ open })
   margin-top: 6px;
   color: #667085;
   font-size: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.progress-layer {
+  margin-top: 6px;
+  overflow: hidden;
+  color: #667085;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .update-progress.is-failed {
@@ -662,6 +787,7 @@ defineExpose({ open })
   gap: 8px;
   padding: 12px 20px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .btn {
@@ -672,6 +798,7 @@ defineExpose({ open })
   cursor: pointer;
   transition: all 0.15s ease;
   border: none;
+  white-space: nowrap;
 }
 
 .btn-secondary {

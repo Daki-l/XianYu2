@@ -2,6 +2,17 @@ import { request } from '@/utils/request'
 
 export type UserRole = 'ADMIN' | 'USER'
 
+export interface SystemUpdateTransfer {
+  phase: 'JAR_DOWNLOAD' | 'IMAGE_PULL'
+  downloadedBytes: number
+  totalBytes: number
+  speedBytesPerSecond: number
+  etaSeconds?: number | null
+  currentLayer?: string | null
+  completedLayers?: number
+  totalLayers?: number
+}
+
 export interface CurrentUser {
   username: string
   role: UserRole
@@ -16,6 +27,7 @@ export interface SystemUpdateStatus {
   requestPending: boolean
   active: boolean
   canRetry: boolean
+  canCancel: boolean
   taskId?: string
   version?: string
   status: 'IDLE' | 'REQUESTED' | 'CHECKING' | 'DOWNLOADING' | 'VERIFYING'
@@ -30,6 +42,7 @@ export interface SystemUpdateStatus {
   updatedAt?: string
   timeoutSeconds?: number
   detail?: string
+  transfer?: SystemUpdateTransfer
 }
 
 const SERVER_VERSION_STORAGE_KEY = 'xianyu2-server-version'
@@ -95,6 +108,14 @@ export function checkUpdate() {
 export function requestSystemUpdate() {
   return request<SystemUpdateStatus>({
     url: '/system/update',
+    method: 'post'
+  })
+}
+
+/** 请求取消仍处于下载或镜像预拉取阶段的更新任务 */
+export function cancelSystemUpdate() {
+  return request<SystemUpdateStatus>({
+    url: '/system/update/cancel',
     method: 'post'
   })
 }
