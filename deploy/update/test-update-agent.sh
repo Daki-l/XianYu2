@@ -221,6 +221,8 @@ write_host_package_fixture() {
   printf 'server nginx\n' > "$package_root/deploy/server/xianyu2.nginx.conf"
   cp "$agent" "$package_root/deploy/update/xianyu2-update-agent"
   printf '%s\n' "$package_agent_version" > "$package_root/deploy/update/agent-version"
+  cp "$script_dir/xianyu2-update-agent.service" "$package_root/deploy/update/xianyu2-update-agent.service"
+  cp "$script_dir/xianyu2-update-agent.path" "$package_root/deploy/update/xianyu2-update-agent.path"
   printf 'config example\n' > "$package_root/deploy/update/update-agent.conf.example"
   printf 'backup hook\n' > "$package_root/deploy/update/backup-mysql"
   printf 'release installer\n' > "$package_root/deploy/update/install-release.sh"
