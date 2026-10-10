@@ -149,6 +149,18 @@ public class SystemController {
         }
     }
 
+    @PostMapping("/update/cancel")
+    public ResultObject<java.util.Map<String, Object>> cancelUpdate(HttpServletRequest request) {
+        if (!isAdmin(request)) {
+            return ResultObject.forbidden(null);
+        }
+        try {
+            return ResultObject.success(systemUpdateService.cancelUpdate());
+        } catch (Exception e) {
+            return ResultObject.failed(e.getMessage());
+        }
+    }
+
     private boolean isAdmin(HttpServletRequest request) {
         Long userId = (Long) request.getAttribute("currentUserId");
         SysUser user = userId == null ? null : authService.getCurrentUser(userId);

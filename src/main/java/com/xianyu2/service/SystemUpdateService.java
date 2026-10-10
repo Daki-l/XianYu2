@@ -45,6 +45,7 @@ public class SystemUpdateService {
             "REQUESTED", "CHECKING", "DOWNLOADING", "VERIFYING", "BACKING_UP",
             "INSTALLING", "RESTARTING", "HEALTH_CHECKING");
     private static final Set<String> TERMINAL_UPDATE_STATUSES = Set.of("SUCCESS", "FAILED", "MANUAL_REQUIRED");
+    private static final Set<String> CANCELLABLE_TRANSFER_PHASES = Set.of("JAR_DOWNLOAD", "IMAGE_PULL");
 
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
@@ -174,6 +175,34 @@ public class SystemUpdateService {
         }
     }
 
+    public synchronized Map<String, Object> cancelUpdate() {
+        Map<String, Object> currentStatus = updateAgentStatus();
+        if (!Boolean.TRUE.equals(currentStatus.get("statusTrusted"))) {
+            throw new IllegalStateException("更新状态协议无法识别，请由宿主机管理员检查更新代理");
+        }
+        if (!Boolean.TRUE.equals(currentStatus.get("canCancel"))) {
+            throw new IllegalStateException("当前阶段不能取消；容器切换开始后请等待任务完成或失败");
+        }
+        Object taskId = currentStatus.get("taskId");
+        if (!isTaskId(taskId)) {
+            throw new IllegalStateException("更新任务标识无效");
+        }
+        try {
+            Files.createDirectories(requestDirectory);
+            if (!isAgentAvailable()) {
+                throw new IllegalStateException("自动更新代理未就绪");
+            }
+            Map<String, Object> cancellation = new LinkedHashMap<>();
+            cancellation.put("schemaVersion", UPDATE_PROTOCOL_SCHEMA_VERSION);
+            cancellation.put("taskId", taskId);
+            cancellation.put("requestedAt", Instant.now().toString());
+            writeJsonAtomically(requestDirectory.resolve("cancel.json"), cancellation);
+            return updateAgentStatus();
+        } catch (Exception e) {
+            throw new IllegalStateException("提交取消更新请求失败: " + e.getMessage(), e);
+        }
+    }
+
     public Map<String, Object> updateAgentStatus() {
         boolean available = isAgentAvailable();
         Path requestPath = requestDirectory.resolve("request.json");
@@ -211,11 +240,22 @@ public class SystemUpdateService {
         result.putIfAbsent("downloadedBytes", 0L);
         result.putIfAbsent("totalBytes", 0L);
         result.putIfAbsent("statusTrusted", true);
-        result.put("active", Boolean.TRUE.equals(result.get("statusTrusted"))
-                && (requestPending || isActiveStatus(status)));
+        boolean active = Boolean.TRUE.equals(result.get("statusTrusted"))
+                && (requestPending || isActiveStatus(status));
+        result.put("active", active);
         result.put("canRetry", "FAILED".equals(status) && !requestPending
                 && Boolean.TRUE.equals(result.get("statusTrusted")));
+        result.put("canCancel", active && "DOWNLOADING".equals(status)
+                && isCancellableTransfer(result.get("transfer")));
         return result;
+    }
+
+    private boolean isCancellableTransfer(Object transfer) {
+        if (!(transfer instanceof Map<?, ?> values)) {
+            return false;
+        }
+        Object phase = values.get("phase");
+        return phase instanceof String phaseName && CANCELLABLE_TRANSFER_PHASES.contains(phaseName);
     }
 
     private void requireSupportedSchema(Map<String, Object> document, String documentType) {

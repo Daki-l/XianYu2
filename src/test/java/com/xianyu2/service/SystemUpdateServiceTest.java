@@ -77,6 +77,87 @@ class SystemUpdateServiceTest {
     }
 
     @Test
+    void forwardsCompatibleTransferTelemetryWithoutChangingTheStatusSchema() throws Exception {
+        Path requestDirectory = temporaryDirectory.resolve("update/request");
+        Path statusDirectory = temporaryDirectory.resolve("update/status");
+        Files.createDirectories(requestDirectory);
+        Files.createDirectories(statusDirectory);
+        Files.writeString(statusDirectory.resolve("agent.ready"), "ready");
+        objectMapper.writeValue(statusDirectory.resolve("status.json").toFile(), Map.of(
+                "schemaVersion", 1,
+                "taskId", "123e4567-e89b-12d3-a456-426614174000",
+                "version", "2.0.8",
+                "status", "DOWNLOADING",
+                "progress", 75,
+                "transfer", Map.of(
+                        "phase", "IMAGE_PULL",
+                        "downloadedBytes", 50L,
+                        "totalBytes", 100L,
+                        "speedBytesPerSecond", 10L,
+                        "etaSeconds", 5L,
+                        "completedLayers", 1,
+                        "totalLayers", 2)));
+
+        Map<String, Object> status = service(requestDirectory, statusDirectory).updateAgentStatus();
+
+        assertTrue(status.get("transfer") instanceof Map<?, ?>);
+        Map<?, ?> transfer = (Map<?, ?>) status.get("transfer");
+        assertEquals("IMAGE_PULL", transfer.get("phase"));
+        assertEquals(50, ((Number) transfer.get("downloadedBytes")).intValue());
+        assertEquals(2, ((Number) transfer.get("totalLayers")).intValue());
+        assertTrue((Boolean) status.get("canCancel"));
+    }
+
+    @Test
+    void writesTaskBoundCancellationOnlyForAnActiveTransfer() throws Exception {
+        Path requestDirectory = temporaryDirectory.resolve("update/request");
+        Path statusDirectory = temporaryDirectory.resolve("update/status");
+        Files.createDirectories(requestDirectory);
+        Files.createDirectories(statusDirectory);
+        Files.writeString(statusDirectory.resolve("agent.ready"), "ready");
+        objectMapper.writeValue(statusDirectory.resolve("status.json").toFile(), Map.of(
+                "schemaVersion", 1,
+                "taskId", "123e4567-e89b-12d3-a456-426614174000",
+                "version", "2.0.8",
+                "status", "DOWNLOADING",
+                "progress", 75,
+                "transfer", Map.of(
+                        "phase", "JAR_DOWNLOAD",
+                        "downloadedBytes", 50L,
+                        "totalBytes", 100L,
+                        "speedBytesPerSecond", 10L)));
+
+        Map<String, Object> status = service(requestDirectory, statusDirectory).cancelUpdate();
+        Map<?, ?> cancellation = objectMapper.readValue(
+                Files.readString(requestDirectory.resolve("cancel.json")), Map.class);
+
+        assertTrue((Boolean) status.get("canCancel"));
+        assertEquals(1, ((Number) cancellation.get("schemaVersion")).intValue());
+        assertEquals("123e4567-e89b-12d3-a456-426614174000", cancellation.get("taskId"));
+        assertTrue(cancellation.get("requestedAt") instanceof String);
+    }
+
+    @Test
+    void rejectsCancellationAfterTheTransferPhase() throws Exception {
+        Path requestDirectory = temporaryDirectory.resolve("update/request");
+        Path statusDirectory = temporaryDirectory.resolve("update/status");
+        Files.createDirectories(requestDirectory);
+        Files.createDirectories(statusDirectory);
+        Files.writeString(statusDirectory.resolve("agent.ready"), "ready");
+        objectMapper.writeValue(statusDirectory.resolve("status.json").toFile(), Map.of(
+                "schemaVersion", 1,
+                "taskId", "123e4567-e89b-12d3-a456-426614174000",
+                "version", "2.0.8",
+                "status", "RESTARTING",
+                "progress", 80));
+
+        SystemUpdateService service = service(requestDirectory, statusDirectory);
+
+        assertThrows(IllegalStateException.class, service::cancelUpdate);
+        assertFalse(Files.exists(requestDirectory.resolve("cancel.json")));
+    }
+
+    @Test
     void newRequestIsNotMaskedByThePreviousTerminalStatus() throws Exception {
         Path requestDirectory = temporaryDirectory.resolve("update/request");
         Path statusDirectory = temporaryDirectory.resolve("update/status");
