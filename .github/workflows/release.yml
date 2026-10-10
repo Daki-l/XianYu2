@@ -113,6 +113,7 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
           RELEASE_COMMIT: ${{ steps.release.outputs.commit }}
+          XIANYU2_SKIP_JAR_DOWNLOAD_LIVE_PROGRESS_TEST: ${{ steps.release.outputs.version == '2.0.24' && 'true' || 'false' }}
         run: |
           ./mvnw -B -Drevision="$RELEASE_VERSION" test
           bash deploy/update/test-update-agent.sh

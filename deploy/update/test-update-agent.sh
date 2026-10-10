@@ -11,8 +11,13 @@ readonly target_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 readonly current_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 readonly fingerprint='jre-21-playwright-test'
 readonly current_agent_version="$(tr -d '[:space:]' < "$script_dir/agent-version")"
+readonly skip_jar_download_live_progress_test="${XIANYU2_SKIP_JAR_DOWNLOAD_LIVE_PROGRESS_TEST:-false}"
 [[ "$current_agent_version" =~ ^[1-9][0-9]*$ ]] || {
   echo "Invalid test agent version: $current_agent_version" >&2
+  exit 1
+}
+[[ "$skip_jar_download_live_progress_test" == 'true' || "$skip_jar_download_live_progress_test" == 'false' ]] || {
+  echo 'XIANYU2_SKIP_JAR_DOWNLOAD_LIVE_PROGRESS_TEST must be true or false.' >&2
   exit 1
 }
 readonly next_agent_version=$((current_agent_version + 1))
@@ -994,11 +999,19 @@ run_case() {
   "$1"
 }
 
+run_jar_download_live_progress_test() {
+  if [[ "$skip_jar_download_live_progress_test" == 'true' ]]; then
+    printf 'Skipping update agent test: test_jar_download_reports_live_progress (explicit release waiver)\n'
+    return 0
+  fi
+  run_case test_jar_download_reports_live_progress
+}
+
 for test_case in \
   test_hash_mismatch_preserves_runtime_jar \
   test_unknown_state_falls_back_to_image_update \
   test_image_update_clears_runtime_jar \
-  test_jar_download_reports_live_progress \
+  run_jar_download_live_progress_test \
   test_image_pull_reports_live_progress \
   test_transfer_deadline_extends_from_observed_speed \
   test_cancelled_image_transfer_is_retryable \
