@@ -17,7 +17,7 @@ readonly current_agent_version="$(tr -d '[:space:]' < "$script_dir/agent-version
 }
 readonly next_agent_version=$((current_agent_version + 1))
 
-for command_name in jq flock sha256sum stat mktemp setsid; do
+for command_name in jq flock sha256sum stat mktemp mkfifo setsid; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "Missing test dependency: $command_name" >&2
     exit 1
@@ -67,10 +67,7 @@ printf 'docker|HTTP_PROXY=%s|HTTPS_PROXY=%s|NO_PROXY=%s\n' \
   "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${NO_PROXY-}" >> "$AGENT_TEST_PROXY_LOG"
 printf '%s\n' "$*" >> "$AGENT_TEST_DOCKER_LOG"
 arguments=" $* "
-if [[ "${AGENT_TEST_DOCKER_PULL_FAIL:-false}" == 'true' && "$arguments" == *' pull app '* ]]; then
-  exit 1
-fi
-  if [[ "${AGENT_TEST_DOCKER_DIRECT_PULL_FAIL:-false}" == 'true' && "$arguments" == *' pull ghcr.io/daki-l/xianyu2@sha256:'* ]]; then
+  if [[ "${AGENT_TEST_DOCKER_PULL_FAIL:-false}" == 'true' && "$arguments" == *' pull app '* ]]; then
     exit 1
   fi
 if [[ "$arguments" == *' config --services '* ]]; then
@@ -108,11 +105,36 @@ for ((index = 0; index < ${#args[@]}; index++)); do
       ;;
   esac
 done
-url="${args[$(( ${#args[@]} - 1 ))]}"
-printf '%s\n' "$url" >> "$AGENT_TEST_CURL_LOG"
-if [[ "${AGENT_TEST_CURL_FAIL:-false}" == 'true' ]]; then
-  exit 28
-fi
+  url="${args[$(( ${#args[@]} - 1 ))]}"
+  printf '%s\n' "$url" >> "$AGENT_TEST_CURL_LOG"
+  if [[ "${AGENT_TEST_CURL_FAIL:-false}" == 'true' ]]; then
+    exit 28
+  fi
+
+  if [[ "$url" == 'http://localhost/images/create' ]]; then
+    if [[ "${AGENT_TEST_DOCKER_ENGINE_CURL_FAIL:-false}" == 'true' ]]; then
+      exit 28
+    fi
+    if [[ "${AGENT_TEST_DOCKER_ENGINE_PULL_FAIL:-false}" == 'true' ]]; then
+      printf '%s\n' '{"error":"simulated registry failure"}'
+      exit 0
+    fi
+    printf '%s\n' '{"status":"Pulling fs layer","id":"layer-one"}'
+    printf '%s\n' '{"status":"Pulling fs layer","id":"layer-two"}'
+    printf '%s\n' '{"status":"Already exists","id":"layer-two"}'
+    printf '%s\n' '{"status":"Downloading","id":"layer-one","progressDetail":{"current":25,"total":100}}'
+    if [[ -n "${AGENT_TEST_DOCKER_ENGINE_DELAY:-}" ]]; then
+      sleep "$AGENT_TEST_DOCKER_ENGINE_DELAY"
+    fi
+    printf '%s\n' '{"status":"Downloading","id":"layer-one","progressDetail":{"current":50,"total":100}}'
+    if [[ -n "${AGENT_TEST_DOCKER_ENGINE_DELAY:-}" ]]; then
+      sleep "$AGENT_TEST_DOCKER_ENGINE_DELAY"
+    fi
+    printf '%s\n' '{"status":"Downloading","id":"layer-one","progressDetail":{"current":100,"total":100}}'
+    printf '%s\n' '{"status":"Download complete","id":"layer-one","progressDetail":{"current":100,"total":100}}'
+    printf '%s\n' '{"status":"Pull complete","id":"layer-one","progressDetail":{"current":100,"total":100}}'
+    exit 0
+  fi
 
 if [[ "$url" == https://api.github.com/repos/Daki-l/XianYu2/releases/assets/* && -n "$headers" ]]; then
   asset_id="${url##*/}"
@@ -132,7 +154,17 @@ case "$url" in
   */git/ref/tags/*) cp "$AGENT_TEST_FIXTURE/tag-ref.json" "$destination" ;;
   */assets/1) cp "$AGENT_TEST_FIXTURE/release-manifest.json" "$destination" ;;
   */assets/2) cp "$AGENT_TEST_FIXTURE/release-manifest.json.bundle" "$destination" ;;
-  */assets/3) cp "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar" "$destination" ;;
+  */assets/3)
+    if [[ "${AGENT_TEST_JAR_PROGRESS:-false}" == 'true' ]]; then
+      head -c 4 "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar" > "$destination"
+      sleep "${AGENT_TEST_JAR_PROGRESS_DELAY:-2}"
+      head -c 8 "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar" | tail -c 4 >> "$destination"
+      sleep "${AGENT_TEST_JAR_PROGRESS_DELAY:-2}"
+      tail -c +9 "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar" >> "$destination"
+    else
+      cp "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar" "$destination"
+    fi
+    ;;
   */assets/4) cp "$AGENT_TEST_FIXTURE/xianyu2-v2.0.8.jar.bundle" "$destination" ;;
   *) echo "Unexpected curl URL: $url" >&2; exit 1 ;;
 esac
@@ -222,6 +254,12 @@ write_request() {
   chmod 0640 "$request_dir/request.json"
 }
 
+write_cancel_request() {
+  jq -n --arg taskId "$task_id" --arg requestedAt "$(date --iso-8601=seconds)" \
+    '{schemaVersion: 1, taskId: $taskId, requestedAt: $requestedAt}' > "$request_dir/cancel.json"
+  chmod 0640 "$request_dir/cancel.json"
+}
+
 write_installed_state() {
   jq -n --arg digest "$current_digest" --arg fingerprint "$fingerprint" \
     '{schemaVersion: 1, imageDigest: $digest, runtimeFingerprint: $fingerprint}' > "$runtime_dir/installed.json"
@@ -232,6 +270,48 @@ run_agent() {
   AGENT_TEST_FIXTURE="$fixture_dir" AGENT_TEST_DOCKER_LOG="$docker_log" \
     AGENT_TEST_COSIGN_IDENTITY="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${target_tag}" \
     PATH="$mock_bin:$PATH" XIANYU2_UPDATE_AGENT_CONFIG="$config_file" bash "$agent" "$@"
+}
+
+run_agent_in_background() {
+  agent_log="$case_root/agent.log"
+  printf 'Running update agent in background: %s\n' "${*:-<request>}"
+  setsid env \
+    AGENT_TEST_FIXTURE="$fixture_dir" AGENT_TEST_DOCKER_LOG="$docker_log" \
+    AGENT_TEST_COSIGN_IDENTITY="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${target_tag}" \
+    PATH="$mock_bin:$PATH" XIANYU2_UPDATE_AGENT_CONFIG="$config_file" bash "$agent" "$@" > "$agent_log" 2>&1 &
+  agent_pid=$!
+}
+
+wait_for_live_transfer() {
+  local phase="$1"
+  local attempt
+  for attempt in $(seq 1 60); do
+    if [[ -f "$status_dir/status.json" ]] && jq -e --arg phase "$phase" '
+      .status == "DOWNLOADING" and .transfer.phase == $phase
+      and (.transfer.downloadedBytes > 0)
+      and (.transfer.totalBytes > .transfer.downloadedBytes)
+      and (.transfer.speedBytesPerSecond > 0)
+    ' "$status_dir/status.json" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  kill -KILL -- "-${agent_pid}" 2>/dev/null || true
+  wait "$agent_pid" 2>/dev/null || true
+  fail "Did not observe live ${phase} transfer progress: $(cat "$agent_log" 2>/dev/null || true)"
+}
+
+wait_for_background_agent() {
+  if wait "$agent_pid"; then
+    return 0
+  fi
+  fail "Background update agent failed: $(cat "$agent_log" 2>/dev/null || true)"
+}
+
+wait_for_background_agent_failure() {
+  if wait "$agent_pid"; then
+    fail 'Background update agent unexpectedly succeeded'
+  fi
 }
 
 run_agent_until_heartbeat_wait() {
@@ -281,6 +361,7 @@ test_unknown_state_falls_back_to_image_update() {
   assert_status SUCCESS
   [[ ! -e "$runtime_dir/app.jar" ]] || fail 'Unknown state wrote runtime JAR instead of using the image baseline'
   [[ "$(jq -r '.source' "$runtime_dir/installed.json")" == baseline ]] || fail 'Unknown state did not record baseline source'
+  ! grep -Fq '/assets/3' "$curl_log" || fail 'Unknown state downloaded a JAR before selecting the image baseline'
 }
 
 test_image_update_clears_runtime_jar() {
@@ -296,7 +377,133 @@ test_image_update_clears_runtime_jar() {
   [[ ! -e "$runtime_dir/app.jar" ]] || fail 'Image update retained runtime JAR'
   [[ "$(jq -r '.source' "$runtime_dir/installed.json")" == baseline ]] || fail 'Image update did not record baseline source'
   grep -Fq "APP_IMAGE_DIGEST=$target_digest" "$project_dir/release.env" || fail 'Image update did not write release.env'
-  grep -Fq 'pull app' "$docker_log" || fail 'Image update did not pull the app image'
+  grep -Fqx 'http://localhost/images/create' "$curl_log" || fail 'Image update did not use the Docker Engine progress endpoint'
+  ! grep -Fq '/assets/3' "$curl_log" || fail 'Image update downloaded an unused JAR'
+}
+
+test_jar_download_reports_live_progress() {
+  prepare_case jar-live-progress
+  local sha
+  write_fixture jar placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture jar "$sha"
+  write_request
+  write_installed_state
+  export AGENT_TEST_JAR_PROGRESS=true
+  export AGENT_TEST_JAR_PROGRESS_DELAY=2
+  run_agent_in_background
+  wait_for_live_transfer JAR_DOWNLOAD
+  jq -e '
+    .transfer.phase == "JAR_DOWNLOAD"
+    and .transfer.downloadedBytes > 0
+    and .transfer.downloadedBytes < .transfer.totalBytes
+    and .transfer.speedBytesPerSecond > 0
+    and (.transfer.etaSeconds | type) == "number"
+  ' "$status_dir/status.json" >/dev/null || fail 'JAR transfer status lacks live byte, speed, or ETA telemetry'
+  wait_for_background_agent
+  unset AGENT_TEST_JAR_PROGRESS AGENT_TEST_JAR_PROGRESS_DELAY
+  assert_status SUCCESS
+}
+
+test_image_pull_reports_live_progress() {
+  prepare_case image-live-progress
+  local sha
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  export AGENT_TEST_DOCKER_ENGINE_DELAY=2
+  run_agent_in_background
+  wait_for_live_transfer IMAGE_PULL
+  jq -e '
+    .transfer.phase == "IMAGE_PULL"
+    and .transfer.downloadedBytes > 0
+    and .transfer.downloadedBytes < .transfer.totalBytes
+    and .transfer.speedBytesPerSecond > 0
+    and .transfer.currentLayer == "layer-one"
+    and .transfer.completedLayers == 1
+    and .transfer.totalLayers == 2
+    and (.transfer.etaSeconds | type) == "number"
+  ' "$status_dir/status.json" >/dev/null || fail 'Image pull status lacks live byte, speed, layer, or ETA telemetry'
+  wait_for_background_agent
+  unset AGENT_TEST_DOCKER_ENGINE_DELAY
+  assert_status SUCCESS
+}
+
+test_transfer_deadline_extends_from_observed_speed() {
+  prepare_case dynamic-transfer-deadline
+  local sha
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  cat >> "$config_file" <<'EOF'
+DOWNLOAD_TIMEOUT_SECONDS=2
+DOWNLOAD_MAX_TIMEOUT_SECONDS=60
+DOWNLOAD_IDLE_TIMEOUT_SECONDS=3
+EOF
+  export AGENT_TEST_DOCKER_ENGINE_DELAY=3
+  run_agent_in_background
+  wait_for_live_transfer IMAGE_PULL
+  jq -e '
+    .transfer.phase == "IMAGE_PULL"
+    and .transfer.speedBytesPerSecond > 0
+    and (.timeoutSeconds >= 3 and .timeoutSeconds < 20)
+  ' "$status_dir/status.json" >/dev/null || fail 'Transfer deadline was not extended from observed speed instead of reporting the fixed maximum'
+  wait_for_background_agent
+  unset AGENT_TEST_DOCKER_ENGINE_DELAY
+  assert_status SUCCESS
+}
+
+test_cancelled_image_transfer_is_retryable() {
+  prepare_case cancel-image-transfer
+  local sha
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  printf 'old-runtime-jar\n' > "$runtime_dir/app.jar"
+  export AGENT_TEST_DOCKER_ENGINE_DELAY=3
+  run_agent_in_background
+  wait_for_live_transfer IMAGE_PULL
+  write_cancel_request
+  wait_for_background_agent_failure
+  unset AGENT_TEST_DOCKER_ENGINE_DELAY
+  assert_status FAILED
+  grep -Fq '更新已取消' "$status_dir/status.json" || fail 'Cancellation was not reported as a retryable update failure'
+  jq -e 'has("transfer") | not' "$status_dir/status.json" >/dev/null \
+    || fail 'Cancelled update retained an active transfer in its terminal status'
+  assert_file_contains "$runtime_dir/app.jar" 'old-runtime-jar'
+  grep -Fq "APP_IMAGE_DIGEST=$current_digest" "$project_dir/release.env" || fail 'Cancellation changed the release input'
+  [[ ! -e "$request_dir/cancel.json" ]] || fail 'Agent did not consume the cancellation request'
+
+  write_request
+  run_agent
+  assert_status SUCCESS
+}
+
+test_verified_jar_cache_skips_repeated_download() {
+  prepare_case jar-cache
+  local sha cache_dir cache_jar cache_metadata certificate_identity
+  write_fixture jar placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture jar "$sha"
+  write_request
+  write_installed_state
+  cache_dir="$work_dir/cache"
+  cache_jar="$cache_dir/app.jar"
+  cache_metadata="$cache_dir/app.jar.json"
+  certificate_identity="https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/${target_tag}"
+  mkdir -p "$cache_dir"
+  cp "$fixture_dir/xianyu2-v2.0.8.jar" "$cache_jar"
+  jq -n --arg version "$target_version" --arg name 'xianyu2-v2.0.8.jar' --arg sha "$sha" \
+    --arg identity "$certificate_identity" --argjson size "$(stat -c '%s' "$cache_jar")" \
+    '{schemaVersion: 1, version: $version, name: $name, sha256: $sha, size: $size,
+      certificateIdentity: $identity}' > "$cache_metadata"
+  run_agent
+  assert_status SUCCESS
+  ! grep -Fq '/assets/3' "$curl_log" || fail 'Verified JAR cache did not skip the JAR asset download'
+  ! grep -Fq '/assets/4' "$curl_log" || fail 'Verified JAR cache did not skip the JAR bundle download'
 }
 
 test_downgrade_is_rejected() {
@@ -324,12 +531,12 @@ test_image_pull_failure_preserves_runtime_jar() {
   write_fixture image "$sha"
   write_request
   printf 'old-runtime-jar\n' > "$runtime_dir/app.jar"
-  export AGENT_TEST_DOCKER_PULL_FAIL=true
+  export AGENT_TEST_DOCKER_ENGINE_PULL_FAIL=true
   if run_agent; then
-    unset AGENT_TEST_DOCKER_PULL_FAIL
+    unset AGENT_TEST_DOCKER_ENGINE_PULL_FAIL
     fail 'Image pull failure unexpectedly succeeded'
   fi
-  unset AGENT_TEST_DOCKER_PULL_FAIL
+  unset AGENT_TEST_DOCKER_ENGINE_PULL_FAIL
   assert_status FAILED
   assert_file_contains "$runtime_dir/app.jar" 'old-runtime-jar'
   grep -Fq "APP_IMAGE_DIGEST=$current_digest" "$project_dir/release.env" || fail 'Image pull failure did not restore release.env'
@@ -343,12 +550,12 @@ test_candidate_image_pull_failure_keeps_release_inputs() {
   write_fixture image "$sha"
   write_request
   printf 'old-runtime-jar\n' > "$runtime_dir/app.jar"
-  export AGENT_TEST_DOCKER_DIRECT_PULL_FAIL=true
+  export AGENT_TEST_DOCKER_ENGINE_CURL_FAIL=true
   if run_agent; then
-    unset AGENT_TEST_DOCKER_DIRECT_PULL_FAIL
+    unset AGENT_TEST_DOCKER_ENGINE_CURL_FAIL
     fail 'Candidate image pull failure unexpectedly succeeded'
   fi
-  unset AGENT_TEST_DOCKER_DIRECT_PULL_FAIL
+  unset AGENT_TEST_DOCKER_ENGINE_CURL_FAIL
   assert_status FAILED
   assert_file_contains "$runtime_dir/app.jar" 'old-runtime-jar'
   grep -Fq "APP_IMAGE_DIGEST=$current_digest" "$project_dir/release.env" \
@@ -463,6 +670,8 @@ test_configured_update_proxy_is_scoped_to_download_clients() {
     || fail 'Configured update proxy was not passed to curl'
   grep -Fqx "cosign|HTTP_PROXY=$proxy_url|HTTPS_PROXY=$proxy_url|NO_PROXY=$no_proxy" "$proxy_log" \
     || fail 'Configured update proxy was not passed to Cosign'
+  grep -Fqx 'curl|HTTP_PROXY=|HTTPS_PROXY=|NO_PROXY=' "$proxy_log" \
+    || fail 'Docker Engine progress client inherited the release-download proxy'
   grep -Fqx 'docker|HTTP_PROXY=|HTTPS_PROXY=|NO_PROXY=' "$proxy_log" \
     || fail 'Update proxy leaked into the Docker client'
   ! grep -Fq 'example-secret' "$status_dir/status.json" \
@@ -671,6 +880,24 @@ test_recent_heartbeat_is_not_failed_after_restart() {
   [[ "$(jq -r '.status' "$status_dir/status.json")" == DOWNLOADING ]] || fail 'Recent task status was overwritten'
 }
 
+test_transfer_recovery_uses_idle_timeout_after_restart() {
+  prepare_case transfer-recovery-idle-timeout
+  write_fixture image 'placeholder'
+  printf '%s\n' 'DOWNLOAD_IDLE_TIMEOUT_SECONDS=1' >> "$config_file"
+  mkdir -p "$work_dir/in-progress"
+  jq -n --arg taskId "$task_id" --arg tag "$target_tag" --arg version "$target_version" \
+    '{schemaVersion: 1, taskId: $taskId, releaseTag: $tag, version: $version}' > "$work_dir/in-progress/${task_id}.json"
+  jq -n --arg taskId "$task_id" --arg now "$(date --iso-8601=seconds)" \
+    '{schemaVersion: 1, taskId: $taskId, version: "2.0.8", status: "DOWNLOADING",
+      taskStartedAt: $now, updatedAt: $now, timeoutSeconds: 3600,
+      transfer: {phase: "IMAGE_PULL", downloadedBytes: 50, totalBytes: 100}}' > "$status_dir/status.json"
+
+  run_agent
+
+  assert_status FAILED
+  [[ ! -e "$work_dir/in-progress/${task_id}.json" ]] || fail 'Interrupted transfer task was not archived after its idle window'
+}
+
 test_total_timeout_wins_over_a_recent_heartbeat_after_restart() {
   prepare_case total-timeout-recovery
   write_fixture image 'placeholder'
@@ -716,7 +943,7 @@ test_initial_install_request_uses_application_identity() {
 
 test_total_timeout_requires_systemd_headroom() {
   prepare_case total-timeout-headroom
-  printf '%s\n' 'TASK_TOTAL_TIMEOUT_SECONDS=2671' >> "$config_file"
+  printf '%s\n' 'TASK_TOTAL_TIMEOUT_SECONDS=17971' >> "$config_file"
   if run_agent --check; then
     fail 'Agent accepted a total timeout with no systemd shutdown headroom'
   fi
@@ -730,12 +957,20 @@ test_systemd_start_limit_is_explicit() {
     || fail 'Update agent unit does not set StartLimitBurst'
   grep -Fx 'Environment=HOME=/var/lib/xianyu2/update/private/cosign' "$service_file" >/dev/null \
     || fail 'Update agent unit does not provide a writable private HOME for Cosign metadata'
+  grep -Fx 'TimeoutStartSec=5h' "$service_file" >/dev/null \
+    || fail 'Update agent unit does not provide the slow-transfer task headroom'
   grep -Fx 'WantedBy=multi-user.target' "$service_file" >/dev/null \
     || fail 'Update agent service is not enabled for boot recovery'
 }
 
 test_installer_enables_boot_recovery_service() {
   local installer="$script_dir/install-update-agent.sh"
+  grep -Fq 'timeout mkfifo' "$installer" \
+    || fail 'Update agent installer does not verify the FIFO dependency'
+  grep -Fq 'TASK_TOTAL_TIMEOUT_SECONDS=2400' "$installer" \
+    || fail 'Update agent installer does not migrate the legacy total-timeout default'
+  grep -Fq 'TASK_TOTAL_TIMEOUT_SECONDS=17100' "$installer" \
+    || fail 'Update agent installer does not install the slow-transfer total-timeout default'
   grep -Fx 'systemctl enable xianyu2-update-agent.service xianyu2-update-agent.path' "$installer" >/dev/null \
     || fail 'Update agent installer does not enable the boot recovery service'
   grep -Fx 'systemctl start xianyu2-update-agent.service' "$installer" >/dev/null \
@@ -751,6 +986,11 @@ for test_case in \
   test_hash_mismatch_preserves_runtime_jar \
   test_unknown_state_falls_back_to_image_update \
   test_image_update_clears_runtime_jar \
+  test_jar_download_reports_live_progress \
+  test_image_pull_reports_live_progress \
+  test_transfer_deadline_extends_from_observed_speed \
+  test_cancelled_image_transfer_is_retryable \
+  test_verified_jar_cache_skips_repeated_download \
   test_downgrade_is_rejected \
   test_image_pull_failure_preserves_runtime_jar \
   test_candidate_image_pull_failure_keeps_release_inputs \
@@ -775,6 +1015,7 @@ for test_case in \
   test_world_readable_request_is_rejected \
   test_claimed_task_is_archived_as_failed_after_restart \
   test_recent_heartbeat_is_not_failed_after_restart \
+  test_transfer_recovery_uses_idle_timeout_after_restart \
   test_total_timeout_wins_over_a_recent_heartbeat_after_restart \
   test_install_release_requires_explicit_tag \
   test_initial_install_request_uses_application_identity \

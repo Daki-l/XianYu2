@@ -7,12 +7,26 @@ readonly install_dir='/usr/local/lib/xianyu2'
 readonly config_dir='/etc/xianyu2'
 readonly state_dir='/var/lib/xianyu2'
 
+migrate_legacy_timeout_default() {
+  local config="$1"
+  # Only migrate the historical packaged default. A deliberately customized
+  # timeout remains the administrator's explicit choice.
+  grep -Fxq 'TASK_TOTAL_TIMEOUT_SECONDS=2400' "$config" || return 0
+  local temporary
+  temporary="$(mktemp "${config}.tmp.XXXXXX")"
+  chmod --reference="$config" "$temporary"
+  chown --reference="$config" "$temporary"
+  sed 's/^TASK_TOTAL_TIMEOUT_SECONDS=2400$/TASK_TOTAL_TIMEOUT_SECONDS=17100/' "$config" > "$temporary"
+  mv -f "$temporary" "$config"
+  echo "Migrated the legacy TASK_TOTAL_TIMEOUT_SECONDS default in $config for slow transfer support." >&2
+}
+
 [[ "${EUID}" -eq 0 ]] || {
   echo 'Run this installer as root.' >&2
   exit 1
 }
 
-for required_command in curl jq cosign docker flock sha256sum stat timeout; do
+for required_command in curl jq cosign docker flock sha256sum stat timeout mkfifo; do
   command -v "$required_command" >/dev/null 2>&1 || {
     echo "Missing required command: $required_command" >&2
     exit 1
@@ -35,6 +49,7 @@ if [[ ! -f "$config_dir/update-agent.conf" ]]; then
   config_created=true
 else
   config_created=false
+  migrate_legacy_timeout_default "$config_dir/update-agent.conf"
 fi
 
 install -m 0644 "$script_dir/xianyu2-update-agent.service" /etc/systemd/system/xianyu2-update-agent.service

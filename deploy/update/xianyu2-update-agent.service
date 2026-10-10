@@ -13,7 +13,7 @@ ExecStart=/usr/local/lib/xianyu2/xianyu2-update-agent
 Restart=on-failure
 RestartSec=15s
 # 必须大于 update-agent.conf 中的 TASK_TOTAL_TIMEOUT_SECONDS。
-TimeoutStartSec=45min
+TimeoutStartSec=5h
 TimeoutStopSec=30s
 Nice=10
 NoNewPrivileges=true

@@ -6,7 +6,7 @@ readonly config_file="${XIANYU2_UPDATE_AGENT_CONFIG:-/etc/xianyu2/update-agent.c
 readonly allowed_asset_hosts='^(api\.github\.com|github\.com|objects\.githubusercontent\.com|release-assets\.githubusercontent\.com)$'
 readonly release_tag_pattern='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 readonly cosign_identity_prefix='https://github.com/Daki-l/XianYu2/.github/workflows/release.yml@refs/tags/'
-readonly systemd_timeout_seconds=2700
+readonly systemd_timeout_seconds=18000
 readonly agent_directory="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly agent_version_file="${XIANYU2_UPDATE_AGENT_VERSION_FILE:-${agent_directory}/agent-version}"
 [[ -r "$agent_version_file" ]] || {
@@ -37,13 +37,35 @@ task_timeout_pid=''
 task_deadline_epoch=0
 task_started_at=''
 app_recreate_started=false
+transfer_phase=''
+transfer_downloaded_bytes=0
+transfer_total_bytes=0
+transfer_speed_bytes_per_second=0
+transfer_eta_seconds=''
+transfer_current_layer=''
+transfer_completed_layers=0
+transfer_total_layers=0
+transfer_last_sample_epoch=0
+transfer_last_sample_bytes=0
+transfer_last_progress_epoch=0
+transfer_started_epoch=0
+transfer_deadline_epoch=0
+transfer_max_deadline_epoch=0
+transfer_failure_detail=''
+transfer_cancelled=false
+active_transfer_pid=''
+active_transfer_parser_pid=''
+active_transfer_fifo=''
 HEARTBEAT_INTERVAL_SECONDS=''
 TASK_RECOVERY_TIMEOUT_SECONDS=''
 DOWNLOAD_TIMEOUT_SECONDS=''
+DOWNLOAD_MAX_TIMEOUT_SECONDS=''
+DOWNLOAD_IDLE_TIMEOUT_SECONDS=''
 BACKUP_TIMEOUT_SECONDS=''
 TASK_TOTAL_TIMEOUT_SECONDS=''
 UPDATE_HTTP_PROXY=''
 UPDATE_NO_PROXY=''
+DOCKER_ENGINE_SOCKET=''
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -159,6 +181,30 @@ run_update_cosign() {
   run_with_update_proxy run_with_timeout "$@"
 }
 
+# These helpers are only invoked as background jobs by transfer monitors. They
+# replace that job with curl so a stall timeout can terminate the real network
+# process instead of an intermediate shell.
+start_update_curl() {
+  unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
+  if [[ -n "$UPDATE_HTTP_PROXY" ]]; then
+    export HTTP_PROXY="$UPDATE_HTTP_PROXY"
+    export HTTPS_PROXY="$UPDATE_HTTP_PROXY"
+    export http_proxy="$UPDATE_HTTP_PROXY"
+    export https_proxy="$UPDATE_HTTP_PROXY"
+    export NO_PROXY="$UPDATE_NO_PROXY"
+    export no_proxy="$UPDATE_NO_PROXY"
+  fi
+  exec curl "$@"
+}
+
+# Docker image pulls are performed by the Docker daemon, not through the
+# release-download proxy. The Unix socket keeps the request local while the
+# daemon continues to apply its own configured registry proxy.
+start_docker_engine_curl() {
+  unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
+  exec curl --unix-socket "$DOCKER_ENGINE_SOCKET" "$@"
+}
+
 load_config() {
   [[ -r "$config_file" ]] || {
     echo "Update agent config is not readable: $config_file" >&2
@@ -185,20 +231,35 @@ load_config() {
   HEARTBEAT_INTERVAL_SECONDS="${HEARTBEAT_INTERVAL_SECONDS:-15}"
   TASK_RECOVERY_TIMEOUT_SECONDS="${TASK_RECOVERY_TIMEOUT_SECONDS:-300}"
   DOWNLOAD_TIMEOUT_SECONDS="${DOWNLOAD_TIMEOUT_SECONDS:-1800}"
+  DOWNLOAD_MAX_TIMEOUT_SECONDS="${DOWNLOAD_MAX_TIMEOUT_SECONDS:-14400}"
+  DOWNLOAD_IDLE_TIMEOUT_SECONDS="${DOWNLOAD_IDLE_TIMEOUT_SECONDS:-600}"
   BACKUP_TIMEOUT_SECONDS="${BACKUP_TIMEOUT_SECONDS:-900}"
-  TASK_TOTAL_TIMEOUT_SECONDS="${TASK_TOTAL_TIMEOUT_SECONDS:-2400}"
+  TASK_TOTAL_TIMEOUT_SECONDS="${TASK_TOTAL_TIMEOUT_SECONDS:-17100}"
   UPDATE_HTTP_PROXY="${UPDATE_HTTP_PROXY:-}"
   UPDATE_NO_PROXY="${UPDATE_NO_PROXY:-localhost,127.0.0.1,::1,mysql}"
+  DOCKER_ENGINE_SOCKET="${DOCKER_ENGINE_SOCKET:-/var/run/docker.sock}"
   if [[ -n "$UPDATE_HTTP_PROXY" ]]; then
     validate_update_http_proxy "$UPDATE_HTTP_PROXY"
   fi
   validate_update_no_proxy "$UPDATE_NO_PROXY"
-  for timeout in "$HEALTH_TIMEOUT_SECONDS" "$HEARTBEAT_INTERVAL_SECONDS" "$TASK_RECOVERY_TIMEOUT_SECONDS" "$DOWNLOAD_TIMEOUT_SECONDS" "$BACKUP_TIMEOUT_SECONDS" "$TASK_TOTAL_TIMEOUT_SECONDS"; do
+  [[ "$DOCKER_ENGINE_SOCKET" == /* && "$DOCKER_ENGINE_SOCKET" != *$'\n'* ]] || {
+    echo 'DOCKER_ENGINE_SOCKET must be an absolute Unix socket path.' >&2
+    return 1
+  }
+  for timeout in "$HEALTH_TIMEOUT_SECONDS" "$HEARTBEAT_INTERVAL_SECONDS" "$TASK_RECOVERY_TIMEOUT_SECONDS" "$DOWNLOAD_TIMEOUT_SECONDS" "$DOWNLOAD_MAX_TIMEOUT_SECONDS" "$DOWNLOAD_IDLE_TIMEOUT_SECONDS" "$BACKUP_TIMEOUT_SECONDS" "$TASK_TOTAL_TIMEOUT_SECONDS"; do
     [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || {
       echo 'Update agent timeout values must be positive integers.' >&2
       return 1
     }
   done
+  (( DOWNLOAD_IDLE_TIMEOUT_SECONDS < DOWNLOAD_MAX_TIMEOUT_SECONDS )) || {
+    echo 'DOWNLOAD_IDLE_TIMEOUT_SECONDS must be lower than DOWNLOAD_MAX_TIMEOUT_SECONDS.' >&2
+    return 1
+  }
+  (( DOWNLOAD_TIMEOUT_SECONDS <= DOWNLOAD_MAX_TIMEOUT_SECONDS )) || {
+    echo 'DOWNLOAD_TIMEOUT_SECONDS must not exceed DOWNLOAD_MAX_TIMEOUT_SECONDS.' >&2
+    return 1
+  }
   (( TASK_TOTAL_TIMEOUT_SECONDS + 30 <= systemd_timeout_seconds )) || {
     echo 'TASK_TOTAL_TIMEOUT_SECONDS must leave at least 30 seconds before the packaged systemd timeout.' >&2
     return 1
@@ -224,6 +285,7 @@ preflight() {
   require_command sha256sum
   require_command stat
   require_command timeout
+  require_command mkfifo
   assert_root_owned_protected_file "$agent_version_file" 'Update agent version file'
   case "$(uname -m)" in
     x86_64|amd64) ;;
@@ -238,10 +300,10 @@ preflight() {
   if (( EUID == 0 )); then
     install -d -m 0750 -o "$APP_UID" -g "$APP_GID" "$UPDATE_REQUEST_DIR"
     install -d -m 0755 -o root -g root "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
-    install -d -m 0750 -o root -g root "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+    install -d -m 0750 -o root -g root "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$UPDATE_WORK_DIR/cache" "$RUNTIME_DIR/archive"
   else
     # 单元测试以非 root 身份运行；正式安装器和 systemd unit 均强制 root。
-    install -d -m 0750 "$UPDATE_REQUEST_DIR" "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$RUNTIME_DIR/archive"
+    install -d -m 0750 "$UPDATE_REQUEST_DIR" "$UPDATE_WORK_DIR" "$UPDATE_WORK_DIR/in-progress" "$UPDATE_WORK_DIR/archive" "$UPDATE_WORK_DIR/cache" "$RUNTIME_DIR/archive"
     install -d -m 0755 "$UPDATE_STATUS_DIR" "$RUNTIME_DIR"
   fi
   [[ "$(stat -c '%d' "$UPDATE_REQUEST_DIR")" == "$(stat -c '%d' "$UPDATE_WORK_DIR")" ]] || {
@@ -339,11 +401,145 @@ is_older_release_version() {
 
 stage_timeout_seconds() {
   case "$1" in
-    DOWNLOADING|VERIFYING|CHECKING) printf '%s\n' "$DOWNLOAD_TIMEOUT_SECONDS" ;;
+    DOWNLOADING) printf '%s\n' "$DOWNLOAD_MAX_TIMEOUT_SECONDS" ;;
+    VERIFYING|CHECKING) printf '%s\n' "$DOWNLOAD_TIMEOUT_SECONDS" ;;
     BACKING_UP) printf '%s\n' "$BACKUP_TIMEOUT_SECONDS" ;;
     RESTARTING|HEALTH_CHECKING) printf '%s\n' "$HEALTH_TIMEOUT_SECONDS" ;;
     *) printf '%s\n' "$TASK_RECOVERY_TIMEOUT_SECONDS" ;;
   esac
+}
+
+reset_transfer_state() {
+  transfer_phase=''
+  transfer_downloaded_bytes=0
+  transfer_total_bytes=0
+  transfer_speed_bytes_per_second=0
+  transfer_eta_seconds=''
+  transfer_current_layer=''
+  transfer_completed_layers=0
+  transfer_total_layers=0
+  transfer_last_sample_epoch=0
+  transfer_last_sample_bytes=0
+  transfer_last_progress_epoch=0
+  transfer_started_epoch=0
+  transfer_deadline_epoch=0
+  transfer_max_deadline_epoch=0
+}
+
+begin_transfer() {
+  local phase="$1"
+  local total_bytes="$2"
+  local progress="$3"
+  local message="$4"
+  local detail="${5:-}"
+  [[ "$phase" == 'JAR_DOWNLOAD' || "$phase" == 'IMAGE_PULL' ]] || {
+    echo "Unsupported transfer phase: $phase" >&2
+    return 1
+  }
+  [[ "$total_bytes" =~ ^[0-9]+$ ]] || {
+    echo 'Transfer total bytes must be a non-negative integer.' >&2
+    return 1
+  }
+  stop_heartbeat
+  reset_transfer_state
+  transfer_phase="$phase"
+  transfer_total_bytes="$total_bytes"
+  transfer_last_sample_epoch="$(date +%s)"
+  transfer_last_progress_epoch="$transfer_last_sample_epoch"
+  transfer_started_epoch="$transfer_last_sample_epoch"
+  transfer_max_deadline_epoch=$((transfer_started_epoch + DOWNLOAD_MAX_TIMEOUT_SECONDS))
+  if (( task_deadline_epoch > 0 && task_deadline_epoch < transfer_max_deadline_epoch )); then
+    transfer_max_deadline_epoch="$task_deadline_epoch"
+  fi
+  transfer_deadline_epoch=$((transfer_started_epoch + DOWNLOAD_TIMEOUT_SECONDS))
+  if (( transfer_deadline_epoch > transfer_max_deadline_epoch )); then
+    transfer_deadline_epoch="$transfer_max_deadline_epoch"
+  fi
+  AGENT_HEARTBEAT_WRITER=true write_status DOWNLOADING "$progress" "$message" "$detail"
+}
+
+extend_transfer_deadline() {
+  local now="$1"
+  local extension="$DOWNLOAD_TIMEOUT_SECONDS"
+  local eta eta_for_extension candidate_deadline
+  if (( transfer_total_bytes > transfer_downloaded_bytes && transfer_speed_bytes_per_second > 0 )); then
+    eta=$(((transfer_total_bytes - transfer_downloaded_bytes + transfer_speed_bytes_per_second - 1) / transfer_speed_bytes_per_second))
+    # A slow proxy should receive enough time for the observed remaining work,
+    # but never turn one transfer into an unbounded task.
+    eta_for_extension="$eta"
+    (( eta_for_extension > DOWNLOAD_MAX_TIMEOUT_SECONDS )) && eta_for_extension="$DOWNLOAD_MAX_TIMEOUT_SECONDS"
+    extension=$((eta_for_extension + DOWNLOAD_IDLE_TIMEOUT_SECONDS))
+    (( extension < DOWNLOAD_TIMEOUT_SECONDS )) && extension="$DOWNLOAD_TIMEOUT_SECONDS"
+  fi
+  candidate_deadline=$((now + extension))
+  (( candidate_deadline > transfer_max_deadline_epoch )) && candidate_deadline="$transfer_max_deadline_epoch"
+  (( candidate_deadline > transfer_deadline_epoch )) && transfer_deadline_epoch="$candidate_deadline"
+}
+
+update_transfer_state() {
+  local downloaded="$1"
+  local total="$2"
+  local current_layer="${3:-}"
+  local completed_layers="${4:-0}"
+  local total_layers="${5:-0}"
+  [[ "$downloaded" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ ]] || {
+    echo 'Transfer byte counters must be non-negative integers.' >&2
+    return 1
+  }
+  [[ "$completed_layers" =~ ^[0-9]+$ && "$total_layers" =~ ^[0-9]+$ ]] || {
+    echo 'Transfer layer counters must be non-negative integers.' >&2
+    return 1
+  }
+  (( total == 0 || downloaded <= total )) || downloaded="$total"
+  (( total_layers == 0 || completed_layers <= total_layers )) || completed_layers="$total_layers"
+
+  local now elapsed delta speed=0 byte_progressed=false
+  now="$(date +%s)"
+  elapsed=$((now - transfer_last_sample_epoch))
+  if (( elapsed > 0 )); then
+    delta=$((downloaded - transfer_last_sample_bytes))
+    if (( delta > 0 )); then
+      speed=$(((delta + elapsed - 1) / elapsed))
+      if (( transfer_speed_bytes_per_second > 0 && speed > 0 )); then
+        transfer_speed_bytes_per_second=$(((transfer_speed_bytes_per_second * 3 + speed) / 4))
+      elif (( speed > 0 )); then
+        transfer_speed_bytes_per_second="$speed"
+      fi
+      transfer_last_progress_epoch="$now"
+      byte_progressed=true
+    elif (( now - transfer_last_progress_epoch >= 5 )); then
+      transfer_speed_bytes_per_second=0
+    fi
+    transfer_last_sample_epoch="$now"
+    transfer_last_sample_bytes="$downloaded"
+  fi
+
+  transfer_downloaded_bytes="$downloaded"
+  transfer_total_bytes="$total"
+  transfer_current_layer="$current_layer"
+  transfer_completed_layers="$completed_layers"
+  transfer_total_layers="$total_layers"
+  if (( total > downloaded && transfer_speed_bytes_per_second > 0 )); then
+    transfer_eta_seconds=$(((total - downloaded + transfer_speed_bytes_per_second - 1) / transfer_speed_bytes_per_second))
+  else
+    transfer_eta_seconds=''
+  fi
+  if [[ "$byte_progressed" == 'true' ]]; then
+    extend_transfer_deadline "$now"
+  fi
+}
+
+publish_transfer_status() {
+  local progress="$1"
+  local message="$2"
+  local detail="${3:-}"
+  AGENT_HEARTBEAT_WRITER=true write_status DOWNLOADING "$progress" "$message" "$detail"
+}
+
+finish_transfer() {
+  downloaded_bytes="$transfer_downloaded_bytes"
+  total_bytes="$transfer_total_bytes"
+  reset_transfer_state
 }
 
 stop_heartbeat() {
@@ -385,7 +581,19 @@ write_status() {
   local progress="$2"
   local message="$3"
   local detail="${4:-}"
-  local payload
+  local payload status_downloaded_bytes status_total_bytes status_timeout_seconds now
+  status_downloaded_bytes="$downloaded_bytes"
+  status_total_bytes="$total_bytes"
+  if [[ -n "$transfer_phase" ]]; then
+    status_downloaded_bytes="$transfer_downloaded_bytes"
+    status_total_bytes="$transfer_total_bytes"
+  fi
+  status_timeout_seconds="$(stage_timeout_seconds "$status")"
+  if [[ "$status" == 'DOWNLOADING' && -n "$transfer_phase" && "$transfer_deadline_epoch" =~ ^[1-9][0-9]*$ ]]; then
+    now="$(date +%s)"
+    status_timeout_seconds=$((transfer_deadline_epoch - now))
+    (( status_timeout_seconds > 0 )) || status_timeout_seconds=1
+  fi
   if [[ -z "$stage_started_at" || "$current_stage" != "$status" ]]; then
     current_stage="$status"
     stage_started_at="$(timestamp)"
@@ -400,16 +608,31 @@ write_status() {
     --arg taskStartedAt "$task_started_at" \
     --arg stageStartedAt "$stage_started_at" \
     --arg updatedAt "$(timestamp)" \
-    --argjson timeoutSeconds "$(stage_timeout_seconds "$status")" \
+    --argjson timeoutSeconds "$status_timeout_seconds" \
     --argjson progress "$progress" \
-    --argjson downloadedBytes "$downloaded_bytes" \
-    --argjson totalBytes "$total_bytes" \
+    --argjson downloadedBytes "$status_downloaded_bytes" \
+    --argjson totalBytes "$status_total_bytes" \
+    --arg transferPhase "$transfer_phase" \
+    --argjson transferDownloadedBytes "$transfer_downloaded_bytes" \
+    --argjson transferTotalBytes "$transfer_total_bytes" \
+    --argjson transferSpeedBytesPerSecond "$transfer_speed_bytes_per_second" \
+    --arg transferEtaSeconds "$transfer_eta_seconds" \
+    --arg transferCurrentLayer "$transfer_current_layer" \
+    --argjson transferCompletedLayers "$transfer_completed_layers" \
+    --argjson transferTotalLayers "$transfer_total_layers" \
     --arg backupPath "$backup_path" \
     --arg backupSha256 "$backup_sha256" \
     '{schemaVersion: $schemaVersion, taskId: $taskId, version: $version, status: $status, progress: $progress,
        message: $message, detail: $detail, taskStartedAt: $taskStartedAt, stageStartedAt: $stageStartedAt,
       updatedAt: $updatedAt, timeoutSeconds: $timeoutSeconds,
-      downloadedBytes: $downloadedBytes, totalBytes: $totalBytes}
+       downloadedBytes: $downloadedBytes, totalBytes: $totalBytes}
+      + (if $transferPhase == "" then {} else {transfer: {
+          phase: $transferPhase, downloadedBytes: $transferDownloadedBytes, totalBytes: $transferTotalBytes,
+          speedBytesPerSecond: $transferSpeedBytesPerSecond,
+          etaSeconds: (if $transferEtaSeconds == "" then null else ($transferEtaSeconds | tonumber) end),
+          currentLayer: (if $transferCurrentLayer == "" then null else $transferCurrentLayer end),
+          completedLayers: $transferCompletedLayers, totalLayers: $transferTotalLayers
+        }} end)
       + (if $backupPath == "" then {} else {backup: {path: $backupPath, sha256: $backupSha256}} end)')"
   write_json_atomically "$UPDATE_STATUS_DIR/status.json" "$payload"
   if [[ "${AGENT_HEARTBEAT_WRITER:-false}" != 'true' ]]; then
@@ -426,6 +649,7 @@ archive_task() {
 fail_task() {
   local message="$1"
   local detail="${2:-查看宿主机 xianyu2-update-agent 日志和更新目录中的归档文件。}"
+  [[ -z "$transfer_phase" ]] || finish_transfer
   write_status FAILED 100 "$message" "$detail" || true
   archive_task || true
 }
@@ -433,11 +657,14 @@ fail_task() {
 on_error() {
   local exit_code=$?
   if [[ -n "$task_id" ]]; then
-    if [[ "$app_recreate_started" == 'true' ]]; then
+    if [[ "$transfer_cancelled" == 'true' ]]; then
+      fail_task '更新已取消' "$transfer_failure_detail"
+    elif [[ "$app_recreate_started" == 'true' ]]; then
       fail_task "更新失败（退出码 ${exit_code}）" \
         '已尝试启动新应用容器，Flyway 可能已执行。请勿假定已自动回退；请按备份、容器日志和归档文件人工恢复。'
     else
-      fail_task "更新失败（退出码 ${exit_code}）"
+      fail_task "更新失败（退出码 ${exit_code}）" \
+        "${transfer_failure_detail:-查看宿主机 xianyu2-update-agent 日志和更新目录中的归档文件。}"
     fi
   fi
   exit "$exit_code"
@@ -464,7 +691,23 @@ cleanup_download_dir() {
   rm -rf "$download_dir"
 }
 
+stop_active_transfer() {
+  if [[ -n "$active_transfer_pid" ]] && kill -0 "$active_transfer_pid" 2>/dev/null; then
+    kill -TERM "$active_transfer_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$active_transfer_parser_pid" ]] && kill -0 "$active_transfer_parser_pid" 2>/dev/null; then
+    kill -TERM "$active_transfer_parser_pid" 2>/dev/null || true
+  fi
+  [[ -n "$active_transfer_pid" ]] && wait "$active_transfer_pid" 2>/dev/null || true
+  [[ -n "$active_transfer_parser_pid" ]] && wait "$active_transfer_parser_pid" 2>/dev/null || true
+  active_transfer_pid=''
+  active_transfer_parser_pid=''
+  [[ -n "$active_transfer_fifo" ]] && rm -f "$active_transfer_fifo"
+  active_transfer_fifo=''
+}
+
 cleanup() {
+  stop_active_transfer
   stop_heartbeat
   stop_task_timeout
   cleanup_download_dir
@@ -545,6 +788,38 @@ archive_invalid_request() {
     "$UPDATE_WORK_DIR/archive/invalid-request-$(date +%s)-$$-${RANDOM}.json"
 }
 
+claim_cancellation_request() {
+  local cancellation="$UPDATE_REQUEST_DIR/cancel.json"
+  local claimed="$UPDATE_WORK_DIR/in-progress/.cancel-claim-$$-${RANDOM}.json"
+  if [[ ! -e "$cancellation" && ! -L "$cancellation" ]]; then
+    return 1
+  fi
+  # Move the application-owned file into the private directory before reading
+  # it, just like request.json, so the task id cannot change during validation.
+  mv --no-target-directory -- "$cancellation" "$claimed" || return 1
+  if ! is_safe_request_file "$claimed"; then
+    archive_invalid_request "$claimed"
+    echo 'Ignoring an unsafe update cancellation request.' >&2
+    return 1
+  fi
+  local schema_version candidate_id requested_at
+  schema_version="$(jq -r '.schemaVersion // empty' "$claimed" 2>/dev/null || true)"
+  candidate_id="$(jq -r '.taskId // empty' "$claimed" 2>/dev/null || true)"
+  requested_at="$(jq -r '.requestedAt // empty' "$claimed" 2>/dev/null || true)"
+  if [[ "$schema_version" != '1' || ! "$candidate_id" =~ ^[0-9a-fA-F-]{36}$ || -z "$requested_at" || "$candidate_id" != "$task_id" ]]; then
+    archive_invalid_request "$claimed"
+    echo 'Ignoring an invalid or stale update cancellation request.' >&2
+    return 1
+  fi
+  mv -f "$claimed" "$UPDATE_WORK_DIR/archive/cancel-${task_id}-$(date +%s)-$$-${RANDOM}.json"
+}
+
+consume_cancellation_request() {
+  claim_cancellation_request || return 1
+  transfer_cancelled=true
+  transfer_failure_detail='更新已取消；候选文件或镜像尚未切换，可重新尝试。'
+}
+
 recover_unfinished_task() {
   local unfinished
   unfinished="$(find "$UPDATE_WORK_DIR/in-progress" -maxdepth 1 -type f -name '*.json' -print -quit 2>/dev/null || true)"
@@ -552,10 +827,12 @@ recover_unfinished_task() {
   task_file="$unfinished"
   task_id="$(jq -r '.taskId // "unknown"' "$task_file")"
   task_version="$(jq -r '.version // ""' "$task_file")"
-  local previous_status previous_task_id previous_task_started_at last_heartbeat timeout_seconds heartbeat_epoch task_started_epoch now age remaining
+  local previous_status previous_task_id previous_task_started_at previous_status_value previous_transfer_phase last_heartbeat timeout_seconds heartbeat_epoch task_started_epoch now age remaining
   previous_status="$UPDATE_STATUS_DIR/status.json"
   previous_task_id="$(jq -r '.taskId // empty' "$previous_status" 2>/dev/null || true)"
   previous_task_started_at="$(jq -r '.taskStartedAt // empty' "$previous_status" 2>/dev/null || true)"
+  previous_status_value="$(jq -r '.status // empty' "$previous_status" 2>/dev/null || true)"
+  previous_transfer_phase="$(jq -r '.transfer.phase // empty' "$previous_status" 2>/dev/null || true)"
   last_heartbeat="$(jq -r '.updatedAt // empty' "$previous_status" 2>/dev/null || true)"
   timeout_seconds="$(jq -r '.timeoutSeconds // empty' "$previous_status" 2>/dev/null || true)"
   task_started_at=''
@@ -586,6 +863,13 @@ recover_unfinished_task() {
       if [[ "$task_started_epoch" =~ ^[0-9]+$ ]]; then
         local total_remaining=$((TASK_TOTAL_TIMEOUT_SECONDS - (now - task_started_epoch) + 1))
         (( total_remaining < remaining )) && remaining="$total_remaining"
+      fi
+      if [[ "$previous_status_value" == 'DOWNLOADING' \
+        && ( "$previous_transfer_phase" == 'JAR_DOWNLOAD' || "$previous_transfer_phase" == 'IMAGE_PULL' ) ]]; then
+        # A service restart cannot resume the old curl/Docker Engine stream.
+        # Keep only the no-byte-progress window before making it retryable.
+        local transfer_recovery_remaining=$((DOWNLOAD_IDLE_TIMEOUT_SECONDS + 1))
+        (( transfer_recovery_remaining < remaining )) && remaining="$transfer_recovery_remaining"
       fi
       (( remaining > 0 )) || remaining=1
       # After a host restart no process owns this task any more, but a heartbeat may
@@ -647,11 +931,75 @@ verify_release_commit() {
   }
 }
 
+wait_for_file_transfer() {
+  local pid="$1"
+  local file="$2"
+  local progress="$3"
+  local message="$4"
+  local detail="$5"
+  local now bytes exit_code abort_reason=''
+
+  while kill -0 "$pid" 2>/dev/null; do
+    if consume_cancellation_request; then
+      abort_reason="$transfer_failure_detail"
+    fi
+    bytes=0
+    if [[ -f "$file" ]]; then
+      bytes="$(stat -c '%s' "$file")"
+    fi
+    update_transfer_state "$bytes" "$transfer_total_bytes"
+    publish_transfer_status "$progress" "$message" "$detail"
+    now="$(date +%s)"
+    if [[ -n "$abort_reason" ]]; then
+      :
+    elif (( now >= transfer_deadline_epoch )); then
+      abort_reason="下载超过最长允许时长 ${DOWNLOAD_MAX_TIMEOUT_SECONDS} 秒，已停止。"
+    elif (( now - transfer_last_progress_epoch >= DOWNLOAD_IDLE_TIMEOUT_SECONDS )); then
+      abort_reason="下载连续 ${DOWNLOAD_IDLE_TIMEOUT_SECONDS} 秒无字节增长，已停止。"
+    fi
+    if [[ -n "$abort_reason" ]]; then
+      transfer_failure_detail="$abort_reason"
+      kill -TERM "$pid" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+  done
+
+  bytes=0
+  if [[ -f "$file" ]]; then
+    bytes="$(stat -c '%s' "$file")"
+  fi
+  update_transfer_state "$bytes" "$transfer_total_bytes"
+  publish_transfer_status "$progress" "$message" "$detail"
+  if wait "$pid"; then
+    active_transfer_pid=''
+    [[ -z "$abort_reason" ]] || return 124
+    return 0
+  fi
+  exit_code=$?
+  active_transfer_pid=''
+  [[ -n "$abort_reason" ]] && return 124
+  return "$exit_code"
+}
+
 download_api_asset() {
   local asset_id="$1"
   local destination="$2"
+  local transfer_phase="${3:-}"
+  local transfer_total="${4:-0}"
+  local transfer_progress="${5:-20}"
+  local transfer_message="${6:-正在下载发行文件}"
+  local transfer_detail="${7:-}"
   [[ "$asset_id" =~ ^[1-9][0-9]*$ ]] || {
     echo "Invalid release asset id: $asset_id" >&2
+    return 1
+  }
+  [[ -z "$transfer_phase" || "$transfer_phase" == 'JAR_DOWNLOAD' ]] || {
+    echo "Unsupported release asset transfer phase: $transfer_phase" >&2
+    return 1
+  }
+  [[ "$transfer_total" =~ ^[0-9]+$ ]] || {
+    echo 'Release asset transfer total must be a non-negative integer.' >&2
     return 1
   }
 
@@ -659,7 +1007,7 @@ download_api_asset() {
   # it. Resolve each hop ourselves so an untrusted Release redirect never gets
   # a request from the privileged host agent.
   local url="https://api.github.com/repos/Daki-l/XianYu2/releases/assets/${asset_id}"
-  local headers body status location host timeout_seconds hop
+  local headers body status status_file location host timeout_seconds hop
   for ((hop = 0; hop <= 3; hop++)); do
     host="$(printf '%s' "$url" | sed -E 's#^https://([^/]+).*$#\1#')"
     [[ "$url" =~ ^https:// && "$host" =~ $allowed_asset_hosts ]] || {
@@ -669,15 +1017,37 @@ download_api_asset() {
 
     headers="${destination}.headers.$$"
     body="${destination}.body.$$"
-    rm -f "$headers" "$body"
-    timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
-    if ! status="$(run_update_curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
-      --connect-timeout 15 --max-time "$timeout_seconds" \
-      --header 'Accept: application/octet-stream' \
-      --header 'User-Agent: XianYu2-update-agent' \
-      --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url")"; then
-      rm -f "$headers" "$body"
-      return 1
+    status_file="${destination}.status.$$"
+    rm -f "$headers" "$body" "$status_file"
+    if [[ -n "$transfer_phase" ]]; then
+      timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_MAX_TIMEOUT_SECONDS")"
+      begin_transfer "$transfer_phase" "$transfer_total" "$transfer_progress" "$transfer_message" "$transfer_detail"
+      # The monitor below treats actual file-byte growth as progress. Do not
+      # let curl impose a minimum byte rate or a shorter connect deadline on a
+      # slow but still advancing proxy path.
+      start_update_curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+        --max-time "$timeout_seconds" \
+        --header 'Accept: application/octet-stream' \
+        --header 'User-Agent: XianYu2-update-agent' \
+        --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url" > "$status_file" &
+      active_transfer_pid=$!
+      if ! wait_for_file_transfer "$active_transfer_pid" "$body" "$transfer_progress" "$transfer_message" "$transfer_detail"; then
+        rm -f "$headers" "$body" "$status_file"
+        return 1
+      fi
+      status="$(tr -d '\r\n' < "$status_file")"
+      rm -f "$status_file"
+      finish_transfer
+    else
+      timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
+      if ! status="$(run_update_curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+        --connect-timeout 15 --max-time "$timeout_seconds" \
+        --header 'Accept: application/octet-stream' \
+        --header 'User-Agent: XianYu2-update-agent' \
+        --dump-header "$headers" --output "$body" --write-out '%{http_code}' "$url")"; then
+        rm -f "$headers" "$body" "$status_file"
+        return 1
+      fi
     fi
 
     if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
@@ -709,6 +1079,266 @@ download_api_asset() {
 
   echo 'Release asset exceeded the redirect limit.' >&2
   return 1
+}
+
+restore_verified_jar_cache() {
+  local version="$1"
+  local name="$2"
+  local expected_sha="$3"
+  local expected_size="$4"
+  local certificate_identity="$5"
+  local destination="$6"
+  local cache_dir="$UPDATE_WORK_DIR/cache"
+  local cached_jar="$cache_dir/app.jar"
+  local cached_metadata="$cache_dir/app.jar.json"
+  [[ -f "$cached_jar" && ! -L "$cached_jar" && -f "$cached_metadata" && ! -L "$cached_metadata" ]] || return 1
+  if (( EUID == 0 )); then
+    assert_root_owned_protected_file "$cached_jar" 'Cached JAR' || return 1
+    assert_root_owned_protected_file "$cached_metadata" 'Cached JAR metadata' || return 1
+  fi
+  jq -e --arg version "$version" --arg name "$name" --arg sha "$expected_sha" \
+    --argjson size "$expected_size" --arg identity "$certificate_identity" '
+      .schemaVersion == 1 and .version == $version and .name == $name and .sha256 == $sha
+      and .size == $size and .certificateIdentity == $identity
+    ' "$cached_metadata" >/dev/null || return 1
+  [[ "$(stat -c '%s' "$cached_jar")" == "$expected_size" ]] || return 1
+  [[ "$(sha256sum "$cached_jar" | awk '{print $1}')" == "$expected_sha" ]] || return 1
+  cp -- "$cached_jar" "$destination"
+  downloaded_bytes="$expected_size"
+  total_bytes="$expected_size"
+  write_status VERIFYING 40 '复用已验证的应用 JAR 缓存'
+}
+
+cache_verified_jar() {
+  local version="$1"
+  local name="$2"
+  local expected_sha="$3"
+  local expected_size="$4"
+  local certificate_identity="$5"
+  local source="$6"
+  local cache_dir="$UPDATE_WORK_DIR/cache"
+  local cached_jar="$cache_dir/app.jar"
+  local cached_metadata="$cache_dir/app.jar.json"
+  local temporary_jar="${cached_jar}.tmp.${task_id}"
+  local payload
+  install -d -m 0750 "$cache_dir"
+  cp -- "$source" "$temporary_jar"
+  chmod 0640 "$temporary_jar"
+  mv -f "$temporary_jar" "$cached_jar"
+  payload="$(jq -n \
+    --arg version "$version" \
+    --arg name "$name" \
+    --arg sha "$expected_sha" \
+    --argjson size "$expected_size" \
+    --arg identity "$certificate_identity" \
+    --arg verifiedAt "$(timestamp)" \
+    '{schemaVersion: 1, version: $version, name: $name, sha256: $sha, size: $size,
+      certificateIdentity: $identity, verifiedAt: $verifiedAt}')"
+  write_json_atomically "$cached_metadata" "$payload"
+  chmod 0640 "$cached_metadata"
+}
+
+write_image_pull_progress() {
+  local destination="$1"
+  local downloaded="$2"
+  local total="$3"
+  local current_layer="$4"
+  local completed_layers="$5"
+  local total_layers="$6"
+  local payload
+  payload="$(jq -n \
+    --argjson downloadedBytes "$downloaded" \
+    --argjson totalBytes "$total" \
+    --arg currentLayer "$current_layer" \
+    --argjson completedLayers "$completed_layers" \
+    --argjson totalLayers "$total_layers" \
+    '{downloadedBytes: $downloadedBytes, totalBytes: $totalBytes, currentLayer: $currentLayer,
+      completedLayers: $completedLayers, totalLayers: $totalLayers}')"
+  write_json_atomically "$destination" "$payload"
+}
+
+parse_docker_pull_events() {
+  local progress_file="$1"
+  local error_file="$2"
+  declare -A layer_seen=()
+  declare -A manifest_layer_seen=()
+  declare -A layer_current=()
+  declare -A layer_total=()
+  declare -A layer_complete=()
+  local line daemon_error layer_id event_status current total layer
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    if ! jq -e . >/dev/null 2>&1 <<< "$line"; then
+      printf '%s\n' 'Docker daemon returned an invalid image-pull progress record.' > "$error_file"
+      return 1
+    fi
+    daemon_error="$(jq -r '
+      if (.error? | type) == "string" then
+        if (.error | length) > 0 then .error else "" end
+      else "" end
+    ' <<< "$line")"
+    if [[ -n "$daemon_error" ]]; then
+      # Do not persist a registry response because it may contain untrusted text.
+      printf '%s\n' 'Docker daemon rejected the image pull.' > "$error_file"
+      return 1
+    fi
+    layer_id="$(jq -r '
+      if (.id? | type) == "string" then
+        .id | if test("^[A-Za-z0-9:_-]{1,128}$") then . else "" end
+      else "" end
+    ' <<< "$line")"
+    [[ -n "$layer_id" ]] || continue
+    event_status="$(jq -r 'if (.status? | type) == "string" then .status else "" end' <<< "$line")"
+    current="$(jq -r '(.progressDetail.current? // 0) | if type == "number" then if . >= 0 and . == floor then . else 0 end else 0 end' <<< "$line")"
+    total="$(jq -r '(.progressDetail.total? // 0) | if type == "number" then if . >= 0 and . == floor then . else 0 end else 0 end' <<< "$line")"
+    layer_seen["$layer_id"]=1
+    # The daemon emits one of these after resolving the image manifest for
+    # every filesystem layer, before it starts reporting byte progress.
+    [[ "$event_status" == 'Pulling fs layer' ]] && manifest_layer_seen["$layer_id"]=1
+    if (( total > ${layer_total[$layer_id]:-0} )); then
+      layer_total["$layer_id"]="$total"
+    fi
+    if (( current > ${layer_current[$layer_id]:-0} )); then
+      layer_current["$layer_id"]="$current"
+    fi
+    case "$event_status" in
+      'Download complete'|'Pull complete'|'Already exists')
+        layer_complete["$layer_id"]=1
+        if (( ${layer_total[$layer_id]:-0} > 0 )); then
+          layer_current["$layer_id"]="${layer_total[$layer_id]}"
+        fi
+        ;;
+    esac
+
+    local aggregate_downloaded=0 aggregate_total=0 completed_layers=0 total_layers=0
+    local -a aggregate_layers=("${!manifest_layer_seen[@]}")
+    # Keep compatibility with nonstandard daemon streams that omit the
+    # manifest marker, while normal Docker engines use the manifest count.
+    (( ${#aggregate_layers[@]} > 0 )) || aggregate_layers=("${!layer_seen[@]}")
+    for layer in "${aggregate_layers[@]}"; do
+      total_layers=$((total_layers + 1))
+      aggregate_downloaded=$((aggregate_downloaded + ${layer_current[$layer]:-0}))
+      aggregate_total=$((aggregate_total + ${layer_total[$layer]:-0}))
+      [[ "${layer_complete[$layer]:-0}" == '1' ]] && completed_layers=$((completed_layers + 1))
+    done
+    write_image_pull_progress "$progress_file" "$aggregate_downloaded" "$aggregate_total" \
+      "$layer_id" "$completed_layers" "$total_layers"
+  done
+}
+
+refresh_image_pull_progress() {
+  local progress_file="$1"
+  [[ -f "$progress_file" ]] || return 0
+  local downloaded total current_layer completed_layers total_layers
+  if ! IFS=$'\t' read -r downloaded total current_layer completed_layers total_layers < <(
+    jq -r '[.downloadedBytes, .totalBytes, .currentLayer, .completedLayers, .totalLayers] | @tsv' "$progress_file"
+  ); then
+    return 1
+  fi
+  [[ "$downloaded" =~ ^[0-9]+$ && "$total" =~ ^[0-9]+$ && "$completed_layers" =~ ^[0-9]+$ && "$total_layers" =~ ^[0-9]+$ ]] || return 1
+  update_transfer_state "$downloaded" "$total" "$current_layer" "$completed_layers" "$total_layers"
+}
+
+wait_for_image_pull() {
+  local progress_file="$1"
+  local error_file="$2"
+  local progress="$3"
+  local message="$4"
+  local detail="$5"
+  local now abort_reason='' curl_exit=0 parser_exit=0
+
+  while kill -0 "$active_transfer_pid" 2>/dev/null; do
+    if consume_cancellation_request; then
+      abort_reason="$transfer_failure_detail"
+    fi
+    if [[ -z "$abort_reason" ]]; then
+      refresh_image_pull_progress "$progress_file" || {
+        transfer_failure_detail='Docker image-pull progress could not be parsed.'
+        abort_reason="$transfer_failure_detail"
+      }
+    fi
+    publish_transfer_status "$progress" "$message" "$detail"
+    now="$(date +%s)"
+    if [[ -z "$abort_reason" && -f "$error_file" ]]; then
+      transfer_failure_detail='Docker daemon rejected the image pull.'
+      abort_reason="$transfer_failure_detail"
+    elif [[ -z "$abort_reason" ]] && (( now >= transfer_deadline_epoch )); then
+      transfer_failure_detail="镜像下载超过最长允许时长 ${DOWNLOAD_MAX_TIMEOUT_SECONDS} 秒，已停止。"
+      abort_reason="$transfer_failure_detail"
+    elif [[ -z "$abort_reason" ]] && (( now - transfer_last_progress_epoch >= DOWNLOAD_IDLE_TIMEOUT_SECONDS )); then
+      transfer_failure_detail="镜像下载连续 ${DOWNLOAD_IDLE_TIMEOUT_SECONDS} 秒无字节增长，已停止。"
+      abort_reason="$transfer_failure_detail"
+    fi
+    if [[ -n "$abort_reason" ]]; then
+      kill -TERM "$active_transfer_pid" 2>/dev/null || true
+      break
+    fi
+    sleep 1
+  done
+
+  refresh_image_pull_progress "$progress_file" || true
+  publish_transfer_status "$progress" "$message" "$detail"
+  # The curl process can exit before the next polling iteration after the
+  # parser has already recorded a daemon-side failure. Preserve that safe,
+  # agent-generated diagnostic instead of reducing it to a generic error.
+  if [[ -f "$error_file" ]]; then
+    transfer_failure_detail="$(<"$error_file")"
+  fi
+  if wait "$active_transfer_pid"; then
+    curl_exit=0
+  else
+    curl_exit=$?
+  fi
+  active_transfer_pid=''
+  if wait "$active_transfer_parser_pid"; then
+    parser_exit=0
+  else
+    parser_exit=$?
+  fi
+  active_transfer_parser_pid=''
+  rm -f "$active_transfer_fifo"
+  active_transfer_fifo=''
+
+  [[ -z "$abort_reason" ]] || return 124
+  if (( curl_exit != 0 || parser_exit != 0 )); then
+    [[ -n "$transfer_failure_detail" ]] || transfer_failure_detail='Docker image pull failed.'
+    return 1
+  fi
+}
+
+pull_image_with_progress() {
+  local image_reference="$1"
+  local progress_file="$download_dir/image-pull-progress.json"
+  local error_file="$download_dir/image-pull-error.txt"
+  local timeout_seconds
+  rm -f "$progress_file" "$error_file"
+  active_transfer_fifo="$download_dir/image-pull-events.fifo"
+  rm -f "$active_transfer_fifo"
+  mkfifo -m 0600 "$active_transfer_fifo"
+  timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_MAX_TIMEOUT_SECONDS")"
+  begin_transfer IMAGE_PULL 0 75 '正在拉取新的不可变镜像'
+  (
+    # A registry error is reported to the parent through error_file. Do not let
+    # this parser child claim/archive the task through the inherited ERR trap.
+    trap - ERR
+    parse_docker_pull_events "$progress_file" "$error_file" < "$active_transfer_fifo"
+  ) &
+  active_transfer_parser_pid=$!
+  start_docker_engine_curl --fail --silent --show-error --no-buffer --request POST --get \
+    --max-time "$timeout_seconds" \
+    --data-urlencode "fromImage=${image_reference}" http://localhost/images/create > "$active_transfer_fifo" &
+  active_transfer_pid=$!
+  if ! wait_for_image_pull "$progress_file" "$error_file" 75 '正在拉取新的不可变镜像' ''; then
+    rm -f "$progress_file" "$error_file"
+    return 1
+  fi
+  if consume_cancellation_request; then
+    rm -f "$progress_file" "$error_file"
+    return 1
+  fi
+  rm -f "$progress_file" "$error_file"
+  finish_transfer
+  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker image inspect "$image_reference" >/dev/null
 }
 
 release_certificate_identity() {
@@ -837,6 +1467,8 @@ restore_release_env_snapshot() {
 
 process_task() {
   local manual_approved="${1:-false}"
+  transfer_failure_detail=''
+  transfer_cancelled=false
   start_task_timeout
   local requested_tag release_json manifest manifest_bundle jar jar_bundle
   requested_tag="$(jq -r '.releaseTag // empty' "$task_file")"
@@ -919,23 +1551,6 @@ process_task() {
   fi
   [[ "$update_type" == 'jar' || "$update_type" == 'image' ]] || return 1
 
-  write_status DOWNLOADING 20 '正在下载并验证应用 JAR'
-  jar="$download_dir/$jar_name"
-  jar_bundle="$download_dir/$jar_name.bundle"
-  download_api_asset "$(release_asset_id "$release_json" "$jar_name")" "$jar"
-  download_api_asset "$(release_asset_id "$release_json" "$jar_name.bundle")" "$jar_bundle"
-  downloaded_bytes="$(stat -c '%s' "$jar")"
-  total_bytes="$jar_size"
-  [[ "$downloaded_bytes" == "$jar_size" ]] || return 1
-  write_status VERIFYING 40 '正在验证 JAR 签名和校验和'
-  verify_blob "$jar" "$jar_bundle" "$certificate_identity"
-  [[ "$(sha256sum "$jar" | awk '{print $1}')" == "$jar_sha" ]] || return 1
-  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify --certificate-identity "$certificate_identity" \
-    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
-  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-attestation --type slsaprovenance \
-    --certificate-identity "$certificate_identity" \
-    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
-
   local installed current_digest installed_version
   installed="$RUNTIME_DIR/installed.json"
   current_digest="$(read_release_env_digest || true)"
@@ -949,9 +1564,42 @@ process_task() {
       || [[ -z "$current_digest" || "$current_digest" != "$(jq -r '.imageDigest // empty' "$installed" 2>/dev/null || true)" ]] \
       || [[ "$fingerprint" != "$(jq -r '.runtimeFingerprint // empty' "$installed" 2>/dev/null || true)" ]]; then
       # 运行状态未知时不覆盖 runtime JAR；同一 Release 的不可变镜像是安全的完整恢复路径。
-      write_status INSTALLING 60 '当前安装状态无法确认，改为切换完整镜像基线'
+      write_status CHECKING 15 '当前安装状态无法确认，将切换完整镜像基线'
       update_type='image'
     fi
+  fi
+
+  if [[ "$update_type" == 'jar' ]]; then
+    jar="$download_dir/$jar_name"
+    jar_bundle="$download_dir/$jar_name.bundle"
+    if ! restore_verified_jar_cache "$target_version" "$jar_name" "$jar_sha" "$jar_size" "$certificate_identity" "$jar"; then
+      write_status DOWNLOADING 20 '正在下载应用 JAR'
+      download_api_asset "$(release_asset_id "$release_json" "$jar_name")" "$jar" \
+        JAR_DOWNLOAD "$jar_size" 20 '正在下载应用 JAR'
+      downloaded_bytes="$(stat -c '%s' "$jar")"
+      total_bytes="$jar_size"
+      [[ "$downloaded_bytes" == "$jar_size" ]] || return 1
+      write_status VERIFYING 40 '正在下载并验证 JAR 签名和校验和'
+      download_api_asset "$(release_asset_id "$release_json" "$jar_name.bundle")" "$jar_bundle"
+      verify_blob "$jar" "$jar_bundle" "$certificate_identity"
+      [[ "$(sha256sum "$jar" | awk '{print $1}')" == "$jar_sha" ]] || return 1
+      if ! cache_verified_jar "$target_version" "$jar_name" "$jar_sha" "$jar_size" "$certificate_identity" "$jar"; then
+        # The cache only saves a future retry. A verified JAR remains safe to install.
+        echo 'Unable to populate the verified JAR cache; continuing without a cache entry.' >&2
+      fi
+    fi
+    write_status VERIFYING 45 '正在验证候选镜像签名和来源'
+  else
+    write_status VERIFYING 40 '正在验证候选镜像签名和来源'
+  fi
+  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify --certificate-identity "$certificate_identity" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
+  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-attestation --type slsaprovenance \
+    --certificate-identity "$certificate_identity" \
+    --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
+
+  if consume_cancellation_request; then
+    return 1
   fi
 
   if [[ "$update_type" == 'jar' ]]; then
@@ -976,9 +1624,15 @@ process_task() {
       cp "$RELEASE_ENV_FILE" "$previous_release_env"
       had_previous_release_env=true
     fi
-    write_status DOWNLOADING 75 '正在拉取新的不可变镜像'
     # 先以 digest 拉取候选镜像，确认可用后才修改生产 Compose 的受管输入。
-    run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker pull "${image_repo}@${image_digest}"
+    pull_image_with_progress "${image_repo}@${image_digest}"
+    if consume_cancellation_request; then
+      return 1
+    fi
+    # pull_image_with_progress clears its transfer telemetry after the daemon
+    # reports completion. Publish the next explicit stage before changing the
+    # Compose input so the UI never presents this window as an active download.
+    write_status INSTALLING 78 '镜像预拉取完成，正在准备容器切换'
     if ! write_release_env "$image_digest"; then
       restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
       echo 'Unable to switch release.env; restored the previous release input.' >&2
@@ -994,12 +1648,6 @@ process_task() {
     if ! backup_if_required "$manifest"; then
       restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
       echo 'Database backup failed; restored the previous release input before starting the app container.' >&2
-      return 1
-    fi
-    if ! run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" docker compose --project-directory "$PROJECT_DIR" \
-      --env-file "$ENV_FILE" --env-file "$RELEASE_ENV_FILE" -f "$COMPOSE_FILE" pull app; then
-      restore_release_env_snapshot "$previous_release_env" "$had_previous_release_env"
-      echo 'Image pull failed; restored the previous release.env without replacing the runtime JAR.' >&2
       return 1
     fi
     if [[ -f "$RUNTIME_DIR/app.jar" ]]; then

@@ -14,6 +14,9 @@ APP_UID=10001
 APP_GID=10001
 RELEASE_REPOSITORY=ghcr.io/daki-l/xianyu2
 COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+# Docker Engine 的本地 Unix socket。镜像拉取请求通过此 socket 交给 daemon，实际 registry
+# 网络仍由 Docker daemon 自己的 systemd 代理配置决定，不使用 UPDATE_HTTP_PROXY。
+DOCKER_ENGINE_SOCKET=/var/run/docker.sock
 # 可选：仅让本更新代理的 curl 和 Cosign 子进程通过 HTTP/HTTPS CONNECT 代理访问
 # GitHub Release 与 Cosign 的签名校验访问；不会改变应用容器、Compose、Docker daemon 或其他容器的网络。
 # 留空时更新代理强制直连。代理账号密码中的保留字符必须进行 URL 编码，并使用单引号包裹整个 URL。
@@ -22,10 +25,15 @@ UPDATE_HTTP_PROXY=
 UPDATE_NO_PROXY=localhost,127.0.0.1,::1,mysql
 BACKUP_HOOK=/usr/local/lib/xianyu2/backup-mysql
 HEALTH_TIMEOUT_SECONDS=240
-# 状态心跳、一般恢复、下载校验和数据库备份的阶段超时（秒）。
+# 状态心跳、一般恢复、发行元数据/验签和数据库备份的阶段超时（秒）。
 HEARTBEAT_INTERVAL_SECONDS=15
 TASK_RECOVERY_TIMEOUT_SECONDS=300
 DOWNLOAD_TIMEOUT_SECONDS=1800
+# 大型 JAR/镜像传输采用“初始时限 + 基于最近速度/剩余量的动态续期 + 连续无字节增长时限”。
+# DOWNLOAD_MAX_TIMEOUT_SECONDS 是绝对上限，并受任务总时限和 systemd TimeoutStartSec 共同约束；
+# 慢但持续有字节增长的传输不会因旧的 30 分钟固定限制中断。
+DOWNLOAD_MAX_TIMEOUT_SECONDS=14400
+DOWNLOAD_IDLE_TIMEOUT_SECONDS=600
 BACKUP_TIMEOUT_SECONDS=900
-# 整笔任务必须比 systemd 的 TimeoutStartSec 至少早 30 秒结束；默认与 unit 的 45 分钟一致。
-TASK_TOTAL_TIMEOUT_SECONDS=2400
+# 整笔任务必须比 systemd 的 TimeoutStartSec 至少早 30 秒结束；默认对应 5 小时 unit。
+TASK_TOTAL_TIMEOUT_SECONDS=17100
