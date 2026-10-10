@@ -12,7 +12,6 @@ export interface CurrentUser {
 
 export interface SystemUpdateStatus {
   available: boolean
-  enabled: boolean
   statusTrusted?: boolean
   requestPending: boolean
   active: boolean
@@ -81,7 +80,6 @@ export function checkUpdate() {
     currentVersion: string
     latestVersion: string
     hasUpdate: boolean
-    updateEnabled: boolean
     updateContent: string
     publishedAt: string
     downloadUrl: string

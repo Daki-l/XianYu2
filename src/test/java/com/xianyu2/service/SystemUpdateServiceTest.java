@@ -120,21 +120,17 @@ class SystemUpdateServiceTest {
     }
 
     @Test
-    void disabledFeatureGateRejectsNewRequestsWithoutCreatingARequestFile() throws Exception {
+    void updateStatusDoesNotExposeAnEnablementSwitch() throws Exception {
         Path requestDirectory = temporaryDirectory.resolve("update/request");
         Path statusDirectory = temporaryDirectory.resolve("update/status");
         Files.createDirectories(requestDirectory);
         Files.createDirectories(statusDirectory);
         Files.writeString(statusDirectory.resolve("agent.ready"), "ready");
 
-        SystemUpdateService service = new SystemUpdateService(objectMapper, "2.0.7",
-                "https://api.github.com/repos/Daki-l/XianYu2/releases/latest",
-                requestDirectory, statusDirectory, false, HttpClient.newHttpClient());
+        Map<String, Object> status = service(requestDirectory, statusDirectory).updateAgentStatus();
 
-        IllegalStateException error = assertThrows(IllegalStateException.class, service::requestUpdate);
-        assertEquals("在线更新尚未由宿主机管理员启用", error.getMessage());
-        assertFalse(Files.exists(requestDirectory.resolve("request.json")));
-        assertFalse((Boolean) service.updateAgentStatus().get("enabled"));
+        assertTrue((Boolean) status.get("available"));
+        assertFalse(status.containsKey("enabled"));
     }
 
     @Test

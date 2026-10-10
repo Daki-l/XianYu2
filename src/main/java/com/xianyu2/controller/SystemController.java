@@ -125,7 +125,6 @@ public class SystemController {
             respDTO.setCurrentVersion(systemUpdateService.currentVersion());
             respDTO.setLatestVersion(systemUpdateService.currentVersion());
             respDTO.setHasUpdate(false);
-            respDTO.setUpdateEnabled(systemUpdateService.updateEnabled());
             return ResultObject.success(respDTO);
         }
     }

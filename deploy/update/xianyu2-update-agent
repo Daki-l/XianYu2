@@ -42,6 +42,8 @@ TASK_RECOVERY_TIMEOUT_SECONDS=''
 DOWNLOAD_TIMEOUT_SECONDS=''
 BACKUP_TIMEOUT_SECONDS=''
 TASK_TOTAL_TIMEOUT_SECONDS=''
+UPDATE_HTTP_PROXY=''
+UPDATE_NO_PROXY=''
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -97,6 +99,66 @@ assert_root_owned_protected_parent_directories() {
   done
 }
 
+validate_update_http_proxy() {
+  local proxy="$1"
+  local authority port
+  local authority_pattern='^([A-Za-z0-9._~!$&()*+,;=%-]+(:[A-Za-z0-9._~!$&()*+,;=%-]*)?@)?(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:[0-9]{1,5})?$'
+  case "$proxy" in
+    http://*|https://*) ;;
+    *)
+      echo 'UPDATE_HTTP_PROXY must use an http:// or https:// URL.' >&2
+      return 1
+      ;;
+  esac
+  authority="${proxy#*://}"
+  authority="${authority%/}"
+  [[ -n "$authority" && "$authority" != */* && "$authority" != *\?* && "$authority" != *\#* ]] \
+    && [[ "$authority" =~ $authority_pattern ]] || {
+      echo 'UPDATE_HTTP_PROXY must be an HTTP/HTTPS CONNECT proxy authority without a path, query, or fragment.' >&2
+      return 1
+    }
+  if [[ "$authority" =~ :([0-9]+)$ ]]; then
+    port="${BASH_REMATCH[1]}"
+    (( 10#$port >= 1 && 10#$port <= 65535 )) || {
+      echo 'UPDATE_HTTP_PROXY port must be between 1 and 65535.' >&2
+      return 1
+    }
+  fi
+}
+
+validate_update_no_proxy() {
+  local no_proxy="$1"
+  [[ -z "$no_proxy" || "$no_proxy" =~ ^[A-Za-z0-9._:/-]+(,[A-Za-z0-9._:/-]+)*$ ]] || {
+    echo 'UPDATE_NO_PROXY must be a comma-separated list of hosts, IP addresses, or CIDR ranges without whitespace.' >&2
+    return 1
+  }
+}
+
+# Only curl and Cosign need the optional update proxy. Keep the setting out of
+# the Docker client and application process so it cannot alter container traffic.
+run_with_update_proxy() {
+  (
+    unset ALL_PROXY HTTPS_PROXY HTTP_PROXY NO_PROXY all_proxy https_proxy http_proxy no_proxy
+    if [[ -n "$UPDATE_HTTP_PROXY" ]]; then
+      export HTTP_PROXY="$UPDATE_HTTP_PROXY"
+      export HTTPS_PROXY="$UPDATE_HTTP_PROXY"
+      export http_proxy="$UPDATE_HTTP_PROXY"
+      export https_proxy="$UPDATE_HTTP_PROXY"
+      export NO_PROXY="$UPDATE_NO_PROXY"
+      export no_proxy="$UPDATE_NO_PROXY"
+    fi
+    "$@"
+  )
+}
+
+run_update_curl() {
+  run_with_update_proxy curl "$@"
+}
+
+run_update_cosign() {
+  run_with_update_proxy run_with_timeout "$@"
+}
+
 load_config() {
   [[ -r "$config_file" ]] || {
     echo "Update agent config is not readable: $config_file" >&2
@@ -125,6 +187,12 @@ load_config() {
   DOWNLOAD_TIMEOUT_SECONDS="${DOWNLOAD_TIMEOUT_SECONDS:-1800}"
   BACKUP_TIMEOUT_SECONDS="${BACKUP_TIMEOUT_SECONDS:-900}"
   TASK_TOTAL_TIMEOUT_SECONDS="${TASK_TOTAL_TIMEOUT_SECONDS:-2400}"
+  UPDATE_HTTP_PROXY="${UPDATE_HTTP_PROXY:-}"
+  UPDATE_NO_PROXY="${UPDATE_NO_PROXY:-localhost,127.0.0.1,::1,mysql}"
+  if [[ -n "$UPDATE_HTTP_PROXY" ]]; then
+    validate_update_http_proxy "$UPDATE_HTTP_PROXY"
+  fi
+  validate_update_no_proxy "$UPDATE_NO_PROXY"
   for timeout in "$HEALTH_TIMEOUT_SECONDS" "$HEARTBEAT_INTERVAL_SECONDS" "$TASK_RECOVERY_TIMEOUT_SECONDS" "$DOWNLOAD_TIMEOUT_SECONDS" "$BACKUP_TIMEOUT_SECONDS" "$TASK_TOTAL_TIMEOUT_SECONDS"; do
     [[ "$timeout" =~ ^[1-9][0-9]*$ ]] || {
       echo 'Update agent timeout values must be positive integers.' >&2
@@ -541,7 +609,7 @@ github_api_get() {
   local destination="$2"
   local timeout_seconds
   timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
-  curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 15 --max-time "$timeout_seconds" \
+  run_update_curl --fail --silent --show-error --proto '=https' --max-redirs 0 --connect-timeout 15 --max-time "$timeout_seconds" \
     --header 'Accept: application/vnd.github+json' --header 'User-Agent: XianYu2-update-agent' \
     -o "$destination" "$url"
 }
@@ -603,7 +671,7 @@ download_api_asset() {
     body="${destination}.body.$$"
     rm -f "$headers" "$body"
     timeout_seconds="$(remaining_timeout_seconds "$DOWNLOAD_TIMEOUT_SECONDS")"
-    if ! status="$(curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
+    if ! status="$(run_update_curl --fail --silent --show-error --proto '=https' --max-redirs 0 \
       --connect-timeout 15 --max-time "$timeout_seconds" \
       --header 'Accept: application/octet-stream' \
       --header 'User-Agent: XianYu2-update-agent' \
@@ -652,7 +720,7 @@ verify_blob() {
   local artifact="$1"
   local bundle="$2"
   local certificate_identity="$3"
-  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-blob \
+  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-blob \
     --certificate-identity "$certificate_identity" \
     --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" \
     --bundle "$bundle" "$artifact" >/dev/null
@@ -862,9 +930,9 @@ process_task() {
   write_status VERIFYING 40 '正在验证 JAR 签名和校验和'
   verify_blob "$jar" "$jar_bundle" "$certificate_identity"
   [[ "$(sha256sum "$jar" | awk '{print $1}')" == "$jar_sha" ]] || return 1
-  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify --certificate-identity "$certificate_identity" \
+  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify --certificate-identity "$certificate_identity" \
     --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
-  run_with_timeout "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-attestation --type slsaprovenance \
+  run_update_cosign "$DOWNLOAD_TIMEOUT_SECONDS" cosign verify-attestation --type slsaprovenance \
     --certificate-identity "$certificate_identity" \
     --certificate-oidc-issuer "$COSIGN_OIDC_ISSUER" "${image_repo}@${image_digest}" >/dev/null
 

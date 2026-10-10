@@ -24,7 +24,6 @@ const updateInfo = ref<{
   currentVersion: string
   latestVersion: string
   hasUpdate: boolean
-  updateEnabled: boolean
   updateContent: string
   publishedAt: string
   downloadUrl: string
@@ -41,8 +40,6 @@ const checkMobile = () => {
 const isUpdateAvailable = computed(() => {
   return updateInfo.value?.hasUpdate === true
 })
-
-const isUpdateEnabled = computed(() => updateInfo.value?.updateEnabled === true)
 
 const isUpdateRunning = computed(() => updateTask.value?.active === true)
 
@@ -166,7 +163,6 @@ const open = async () => {
         currentVersion: appVersion,
         latestVersion: updateTask.value.version || appVersion,
         hasUpdate: updateTask.value.status !== 'SUCCESS',
-        updateEnabled: false,
         updateContent: '',
         publishedAt: '',
         downloadUrl: ''
@@ -198,7 +194,7 @@ const close = () => {
 }
 
 const startUpdate = async () => {
-  if (submitting.value || isUpdateRunning.value || !updateInfo.value?.hasUpdate || !isUpdateEnabled.value) return
+  if (submitting.value || isUpdateRunning.value || !updateInfo.value?.hasUpdate) return
   const session = dialogSession
   submitting.value = true
   localError.value = ''
@@ -316,7 +312,7 @@ defineExpose({ open })
             <button
               v-if="isUpdateAvailable"
               class="btn btn-primary"
-              :disabled="submitting || isUpdateRunning || !isUpdateEnabled || updateTask?.status === 'MANUAL_REQUIRED'"
+              :disabled="submitting || isUpdateRunning || updateTask?.status === 'MANUAL_REQUIRED'"
               @click="startUpdate"
             >
               {{
@@ -326,8 +322,6 @@ defineExpose({ open })
                     ? '更新进行中'
                     : updateTask?.status === 'MANUAL_REQUIRED'
                       ? '需要人工处理'
-                      : !isUpdateEnabled
-                        ? '等待宿主机启用'
                       : updateTask?.status === 'FAILED'
                       ? '重新尝试'
                       : '立即更新'

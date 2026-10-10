@@ -10,6 +10,12 @@ readonly target_version='2.0.8'
 readonly target_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 readonly current_digest='sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 readonly fingerprint='jre-21-playwright-test'
+readonly current_agent_version="$(tr -d '[:space:]' < "$script_dir/agent-version")"
+[[ "$current_agent_version" =~ ^[1-9][0-9]*$ ]] || {
+  echo "Invalid test agent version: $current_agent_version" >&2
+  exit 1
+}
+readonly next_agent_version=$((current_agent_version + 1))
 
 for command_name in jq flock sha256sum stat mktemp setsid; do
   command -v "$command_name" >/dev/null 2>&1 || {
@@ -43,6 +49,8 @@ make_mocks() {
   mkdir -p "$mock_bin"
   cat > "$mock_bin/cosign" <<'EOF'
 #!/usr/bin/env bash
+printf 'cosign|HTTP_PROXY=%s|HTTPS_PROXY=%s|NO_PROXY=%s\n' \
+  "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${NO_PROXY-}" >> "$AGENT_TEST_PROXY_LOG"
 if [[ "$*" != *"--certificate-identity ${AGENT_TEST_COSIGN_IDENTITY}"* ]]; then
   echo "Cosign did not receive the expected exact release identity." >&2
   exit 1
@@ -55,6 +63,8 @@ EOF
   cat > "$mock_bin/docker" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+printf 'docker|HTTP_PROXY=%s|HTTPS_PROXY=%s|NO_PROXY=%s\n' \
+  "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${NO_PROXY-}" >> "$AGENT_TEST_PROXY_LOG"
 printf '%s\n' "$*" >> "$AGENT_TEST_DOCKER_LOG"
 arguments=" $* "
 if [[ "${AGENT_TEST_DOCKER_PULL_FAIL:-false}" == 'true' && "$arguments" == *' pull app '* ]]; then
@@ -79,6 +89,8 @@ EOF
   cat > "$mock_bin/curl" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+printf 'curl|HTTP_PROXY=%s|HTTPS_PROXY=%s|NO_PROXY=%s\n' \
+  "${HTTP_PROXY-}" "${HTTPS_PROXY-}" "${NO_PROXY-}" >> "$AGENT_TEST_PROXY_LOG"
 destination=''
 headers=''
 write_status=false
@@ -197,7 +209,10 @@ EOF
   : > "$docker_log"
   curl_log="$case_root/curl.log"
   : > "$curl_log"
+  proxy_log="$case_root/proxy.log"
+  : > "$proxy_log"
   export AGENT_TEST_CURL_LOG="$curl_log"
+  export AGENT_TEST_PROXY_LOG="$proxy_log"
   make_mocks
 }
 
@@ -432,6 +447,56 @@ test_download_failure_is_terminal() {
   assert_status FAILED
 }
 
+test_configured_update_proxy_is_scoped_to_download_clients() {
+  prepare_case configured-update-proxy
+  local sha proxy_url no_proxy
+  proxy_url='http://user:example-secret@proxy.example:7890'
+  no_proxy='localhost,127.0.0.1,::1,mysql'
+  printf "UPDATE_HTTP_PROXY='%s'\nUPDATE_NO_PROXY=%s\n" "$proxy_url" "$no_proxy" >> "$config_file"
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  HTTP_PROXY= HTTPS_PROXY= ALL_PROXY= NO_PROXY= http_proxy= https_proxy= all_proxy= no_proxy= run_agent
+  assert_status SUCCESS
+  grep -Fqx "curl|HTTP_PROXY=$proxy_url|HTTPS_PROXY=$proxy_url|NO_PROXY=$no_proxy" "$proxy_log" \
+    || fail 'Configured update proxy was not passed to curl'
+  grep -Fqx "cosign|HTTP_PROXY=$proxy_url|HTTPS_PROXY=$proxy_url|NO_PROXY=$no_proxy" "$proxy_log" \
+    || fail 'Configured update proxy was not passed to Cosign'
+  grep -Fqx 'docker|HTTP_PROXY=|HTTPS_PROXY=|NO_PROXY=' "$proxy_log" \
+    || fail 'Update proxy leaked into the Docker client'
+  ! grep -Fq 'example-secret' "$status_dir/status.json" \
+    || fail 'Update proxy credential leaked into agent status'
+}
+
+test_update_clients_ignore_inherited_proxy_without_configuration() {
+  prepare_case direct-update-clients
+  local sha inherited_proxy
+  inherited_proxy='http://inherited.example:7890'
+  write_fixture image placeholder
+  sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
+  write_fixture image "$sha"
+  write_request
+  HTTP_PROXY="$inherited_proxy" HTTPS_PROXY="$inherited_proxy" ALL_PROXY="$inherited_proxy" \
+    NO_PROXY='inherited.example' run_agent
+  assert_status SUCCESS
+  if grep -E '^(curl|cosign)\|.*inherited\.example' "$proxy_log" >/dev/null; then
+    fail 'Unconfigured update clients inherited a process-wide proxy'
+  fi
+}
+
+test_invalid_update_proxy_is_rejected_before_network_calls() {
+  prepare_case invalid-update-proxy
+  write_fixture image placeholder
+  printf 'UPDATE_HTTP_PROXY=socks5://proxy.example:1080\n' >> "$config_file"
+  if run_agent --check; then
+    fail 'Agent accepted an unsupported update proxy URL'
+  fi
+  [[ ! -s "$curl_log" ]] || fail 'Invalid update proxy reached curl'
+  [[ ! -s "$docker_log" ]] || fail 'Invalid update proxy reached Docker'
+  [[ ! -s "$proxy_log" ]] || fail 'Invalid update proxy started a network client'
+}
+
 test_manual_release_requires_host_confirmation() {
   prepare_case manual-release
   local sha
@@ -463,9 +528,9 @@ test_initial_install_applies_verified_manual_release() {
 test_newer_agent_is_required_for_manual_application() {
   prepare_case minimum-agent-version
   local sha
-  write_fixture host-package-manual-required placeholder false 2
+  write_fixture host-package-manual-required placeholder false "$next_agent_version"
   sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
-  write_fixture host-package-manual-required "$sha" false 2
+  write_fixture host-package-manual-required "$sha" false "$next_agent_version"
   write_request
   run_agent
   assert_status MANUAL_REQUIRED
@@ -478,9 +543,9 @@ test_newer_agent_is_required_for_manual_application() {
 test_newer_agent_blocks_regular_update_with_manual_status() {
   prepare_case minimum-agent-version-regular
   local sha
-  write_fixture image placeholder false 2
+  write_fixture image placeholder false "$next_agent_version"
   sha="$(sha256sum "$fixture_dir/xianyu2-v2.0.8.jar" | awk '{print $1}')"
-  write_fixture image "$sha" false 2
+  write_fixture image "$sha" false "$next_agent_version"
   write_request
   run_agent
   assert_status MANUAL_REQUIRED
@@ -694,6 +759,9 @@ for test_case in \
   test_signature_failure_stops_before_runtime_change \
   test_untrusted_redirect_is_rejected \
   test_download_failure_is_terminal \
+  test_configured_update_proxy_is_scoped_to_download_clients \
+  test_update_clients_ignore_inherited_proxy_without_configuration \
+  test_invalid_update_proxy_is_rejected_before_network_calls \
   test_manual_release_requires_host_confirmation \
   test_initial_install_applies_verified_manual_release \
   test_newer_agent_is_required_for_manual_application \

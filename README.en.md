@@ -187,7 +187,7 @@ Pushes to `main` and pull requests run migration checks, tests, and container sm
 
 ### Linux Production Installation and Online Updates
 
-Production uses two environment files: `.env` in the project directory contains secrets such as database credentials and JWT keys, while `/etc/xianyu2/release.env` contains only the immutable image digest managed by the update agent. Do not place a GitHub token, image digest, or database secrets in the other file. During the first-release rehearsal, keep `UPDATE_ENABLED=false` in the root-owned, container-unwritable `.env`; only a host administrator changes it to `true` and recreates the app after the controlled instance passes verification. This gate only allows or rejects HTTP update requests and never bypasses agent signature or health checks.
+Production uses two environment files: `.env` in the project directory contains secrets such as database credentials and JWT keys, while `/etc/xianyu2/release.env` contains only the immutable image digest managed by the update agent. Do not place a GitHub token, image digest, or database secrets in the other file. Once the update agent is ready, a management administrator can manually submit update requests from the UI at any time; each request still passes the agent's signature, backup, and health checks.
 
 The host requires Docker Engine, Docker Compose v2, `curl`, `jq`, `flock`, `sha256sum`, GNU `timeout`, and Cosign. Choose a pinned Cosign version only from the [official Sigstore instructions](https://docs.sigstore.dev/cosign/system_config/installation/), verify that version against its official SHA-256, then run `cosign version`. The update agent never installs or upgrades host dependencies automatically.
 
@@ -317,6 +317,10 @@ sudoedit .env
 sudo bash deploy/update/install-update-agent.sh
 sudoedit /etc/xianyu2/update-agent.conf
 # Verify PROJECT_DIR, COMPOSE_FILE, ENV_FILE, directory paths, and the database backup hook.
+# When GitHub Release downloads are slow, optionally set UPDATE_HTTP_PROXY=http://127.0.0.1:7890
+# and retain or adjust UPDATE_NO_PROXY=localhost,127.0.0.1,::1,mysql.
+# After configuration, the following check does not update or restart the application.
+sudo /usr/local/lib/xianyu2/xianyu2-update-agent --check
 # The first run installs files and creates the config. Run it again after saving the config to validate dependencies and enable the systemd Path unit.
 sudo bash deploy/update/install-update-agent.sh
 
@@ -324,7 +328,9 @@ sudo bash deploy/update/install-update-agent.sh
 sudo bash deploy/update/install-release.sh "$RELEASE_TAG"
 ```
 
-The installer creates four directory classes: the application can write only `update/request`; it reads `update/status` and `runtime`; the agent-private `update/private` directory is never mounted into the container. A management administrator can request updates only after the controlled instance passes verification and a host administrator explicitly sets `UPDATE_ENABLED=true`. The host agent verifies the GitHub OIDC Cosign identity, JAR hash, image digest and provenance, and runtime fingerprint. Routine business releases replace only the JAR; Java, Playwright, or system dependency changes pull a new image. When installed state is missing or mismatched, the agent never overwrites the runtime JAR and safely switches to the Release image baseline instead. Existing instances back up before Flyway migrations, and an unsuccessful backup or health check stops the installation.
+The installer creates four directory classes: the application can write only `update/request`; it reads `update/status` and `runtime`; the agent-private `update/private` directory is never mounted into the container. Once the update agent is ready, a management administrator can manually submit update requests from the UI at any time. The host agent verifies the GitHub OIDC Cosign identity, JAR hash, image digest and provenance, and runtime fingerprint. Routine business releases replace only the JAR; Java, Playwright, or system dependency changes pull a new image. When installed state is missing or mismatched, the agent never overwrites the runtime JAR and safely switches to the Release image baseline instead. Existing instances back up before Flyway migrations, and an unsuccessful backup or health check stops the installation.
+
+When direct GitHub Release access is slow, configure `UPDATE_HTTP_PROXY` in the root-owned `/etc/xianyu2/update-agent.conf` with an HTTP or HTTPS CONNECT proxy and use `UPDATE_NO_PROXY` for a comma-separated host, IP, or CIDR bypass list. This setting applies only to `curl` and Cosign processes started by the update agent for Release metadata, asset downloads, and signature verification. It does not alter the application UI, application container, Compose, Docker daemon, system-wide proxy, or any other container. The update agent does not write the proxy URL or credentials to the UI or update status; only root should be able to read the configuration file. URL-encode reserved credential characters and quote the complete proxy URL with single quotes. Image-update `docker pull` traffic intentionally continues to use the Docker daemon's existing network policy rather than this dedicated proxy.
 
 When the UI says that manual action is required, the Release changed Compose, the update agent, systemd, permissions, or another host contract. If that Release manifest has a new `hostPackage`, download and install it only after the same Cosign identity, SHA-256, and bundle checks above; do not copy scripts from the default branch. Complete the host instructions in the Release Notes, then run as root:
 
@@ -415,7 +421,6 @@ Copy `.env.example` to `.env`, then update it for the environment:
 | `ALLOWED_ORIGINS` | Frontend origins allowed to access the application | Complete HTTPS domain |
 | `TRUST_PROXY` | Whether proxy headers are trusted | Set to `true` only behind Nginx |
 | `UPDATE_RELEASE_API` | Fixed GitHub Release API | Defaults to the official public endpoint; do not replace it with an arbitrary download URL |
-| `UPDATE_ENABLED` | Whether the management UI may start online updates | Defaults to `false` for the first release; only a host administrator enables it after verification |
 | `DB_POOL_MAX_SIZE` | Maximum database connections | Default `10` for a single instance |
 | `DB_POOL_MIN_IDLE` | Minimum idle connections | Default `2` |
 | `JAVA_OPTS` | JVM container memory policy | Default value is suitable for small instances |

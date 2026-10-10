@@ -5,7 +5,6 @@ app:
   version: ${APP_VERSION:}
   update:
     release-api: ${UPDATE_RELEASE_API:https://api.github.com/repos/Daki-l/XianYu2/releases/latest}
-    enabled: ${UPDATE_ENABLED:false}
     request-dir: ${UPDATE_REQUEST_DIR:/app/update/request}
     status-dir: ${UPDATE_STATUS_DIR:/app/update/status}
   admin:

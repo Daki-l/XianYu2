@@ -14,6 +14,12 @@ APP_UID=10001
 APP_GID=10001
 RELEASE_REPOSITORY=ghcr.io/daki-l/xianyu2
 COSIGN_OIDC_ISSUER=https://token.actions.githubusercontent.com
+# 可选：仅让本更新代理的 curl 和 Cosign 子进程通过 HTTP/HTTPS CONNECT 代理访问
+# GitHub Release 与 Cosign 的签名校验访问；不会改变应用容器、Compose、Docker daemon 或其他容器的网络。
+# 留空时更新代理强制直连。代理账号密码中的保留字符必须进行 URL 编码，并使用单引号包裹整个 URL。
+UPDATE_HTTP_PROXY=
+# 仅在 UPDATE_HTTP_PROXY 非空时使用；不要包含空格或通配符。
+UPDATE_NO_PROXY=localhost,127.0.0.1,::1,mysql
 BACKUP_HOOK=/usr/local/lib/xianyu2/backup-mysql
 HEALTH_TIMEOUT_SECONDS=240
 # 状态心跳、一般恢复、下载校验和数据库备份的阶段超时（秒）。

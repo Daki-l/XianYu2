@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.19",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 2,
+  "manual": {
+    "reason": "更新代理新增仅用于版本下载和签名校验的 HTTP/HTTPS 代理配置，并移除了在线更新的宿主机开关。",
+    "instructions": "先按 Release 的验签与校验说明安装 host package，执行 install-update-agent.sh；如需代理，在 /etc/xianyu2/update-agent.conf 配置 UPDATE_HTTP_PROXY 和 UPDATE_NO_PROXY 并执行 --check；最后由 root 执行 xianyu2-update-agent --apply-manual-release v2.0.19。"
+  }
+}

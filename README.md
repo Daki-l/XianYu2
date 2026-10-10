@@ -197,7 +197,7 @@ Playwright Chromium 使用版本锁定的 `ghcr.io/daki-l/xianyu2-playwright:v<P
 
 ### Linux 生产安装与在线更新
 
-生产安装使用两份环境文件：项目目录的 `.env` 仅保存数据库、JWT 等私密配置；`/etc/xianyu2/release.env` 仅保存由更新代理管理的不可变镜像 digest。不要将 GitHub Token、镜像 digest 或数据库密码写入对方文件。首发演练期间在 root 所有、容器用户不可写的 `.env` 中保持 `UPDATE_ENABLED=false`；受控实例验证通过后才由宿主机管理员改为 `true` 并重建 app。该开关只允许或拒绝 HTTP 更新请求，不能绕过更新代理的验签与健康检查。
+生产安装使用两份环境文件：项目目录的 `.env` 仅保存数据库、JWT 等私密配置；`/etc/xianyu2/release.env` 仅保存由更新代理管理的不可变镜像 digest。不要将 GitHub Token、镜像 digest 或数据库密码写入对方文件。更新代理就绪后，管理后台管理员可随时从页面手动提交更新请求；请求仍需经过代理的验签、备份和健康检查。
 
 宿主机需要 Docker Engine、Docker Compose v2、`curl`、`jq`、`flock`、`sha256sum`、GNU `timeout` 与 Cosign。请仅从 [Sigstore 官方安装说明](https://docs.sigstore.dev/cosign/system_config/installation/) 选择固定的 Cosign 版本，并先核对该版本官方发布的 SHA-256、再执行 `cosign version`。更新代理不会自动安装或升级这些宿主机依赖。
 
@@ -326,7 +326,11 @@ sudoedit .env
 # 安装来自已验证 host package 的更新代理。
 sudo bash deploy/update/install-update-agent.sh
 sudoedit /etc/xianyu2/update-agent.conf
-# 确认 PROJECT_DIR、COMPOSE_FILE、ENV_FILE、目录路径和数据库备份 hook 路径
+# 确认 PROJECT_DIR、COMPOSE_FILE、ENV_FILE、目录路径和数据库备份 hook 路径。
+# GitHub Release 下载较慢时，可选地设置 UPDATE_HTTP_PROXY=http://127.0.0.1:7890
+# 并保留或按需调整 UPDATE_NO_PROXY=localhost,127.0.0.1,::1,mysql。
+# 配置完成后可执行无副作用校验；它不会更新或重启应用。
+sudo /usr/local/lib/xianyu2/xianyu2-update-agent --check
 # 首次执行只安装文件并生成配置；保存配置后再次执行以检查依赖并启用 systemd Path unit
 sudo bash deploy/update/install-update-agent.sh
 
@@ -334,7 +338,9 @@ sudo bash deploy/update/install-update-agent.sh
 sudo bash deploy/update/install-release.sh "$RELEASE_TAG"
 ```
 
-安装脚本会创建四类目录：应用仅能写入 `update/request`，应用只读 `update/status` 与 `runtime`，代理私有的 `update/private` 不挂载进容器。受控实例验证完成且宿主机管理员将 `UPDATE_ENABLED` 显式设为 `true` 后，管理后台管理员才能提交更新请求。代理会验证 GitHub OIDC Cosign 身份、JAR 哈希、镜像 digest 和 provenance、运行时 fingerprint；日常业务版本替换 JAR，Java/Playwright/系统依赖变化拉取新镜像。安装状态缺失或不匹配时不会覆盖 runtime JAR，而是安全地切换到 Release 的完整镜像基线。包含 Flyway 迁移的既有实例会先执行备份 hook，备份或健康检查失败时不会继续安装。
+安装脚本会创建四类目录：应用仅能写入 `update/request`，应用只读 `update/status` 与 `runtime`，代理私有的 `update/private` 不挂载进容器。更新代理就绪后，管理后台管理员可随时从页面手动提交更新请求。代理会验证 GitHub OIDC Cosign 身份、JAR 哈希、镜像 digest 和 provenance、运行时 fingerprint；日常业务版本替换 JAR，Java/Playwright/系统依赖变化拉取新镜像。安装状态缺失或不匹配时不会覆盖 runtime JAR，而是安全地切换到 Release 的完整镜像基线。包含 Flyway 迁移的既有实例会先执行备份 hook，备份或健康检查失败时不会继续安装。
+
+若 GitHub Release 资源直连较慢，可在 root 所有的 `/etc/xianyu2/update-agent.conf` 中设置 `UPDATE_HTTP_PROXY` 为 HTTP 或 HTTPS CONNECT 代理，并用 `UPDATE_NO_PROXY` 配置不走代理的主机、IP 或 CIDR 列表。该设置只在更新代理启动的 `curl` 和 Cosign 进程中生效，用于 Release 元数据、资产下载和签名校验；不会修改应用页面、应用容器、Compose、Docker daemon、系统全局代理或任何其他容器。更新代理不会将代理地址或凭据写入页面和更新状态；配置文件仅应由 root 读取。含保留字符的账号密码必须 URL 编码，并用单引号包裹完整代理 URL。镜像更新时的 `docker pull` 仍由 Docker daemon 的既有网络策略处理，刻意不使用此专用代理。
 
 若更新界面显示“需要人工处理”，说明 Release 改动了 Compose、更新代理、systemd、目录权限或其他宿主机契约。该 Release 的 `release-manifest.json` 若包含新的 `hostPackage`，必须先按上方相同的 Cosign 身份、SHA-256 和 bundle 验证步骤下载并安装该 package；不要从默认分支复制脚本。完成 Release Notes 中的宿主机调整后，再以 root 执行：
 
@@ -425,7 +431,6 @@ docker compose --env-file .env --env-file /etc/xianyu2/release.env -f compose.ya
 | `ALLOWED_ORIGINS` | 允许访问的前端来源 | 完整 HTTPS 域名 |
 | `TRUST_PROXY` | 是否信任代理头 | 仅 Nginx 部署设为 `true` |
 | `UPDATE_RELEASE_API` | 固定 GitHub Release API | 默认官方公开地址；不要改为任意下载 URL |
-| `UPDATE_ENABLED` | 是否允许管理后台发起在线更新 | 首发默认 `false`；仅由宿主机管理员在验证后改为 `true` |
 | `DB_POOL_MAX_SIZE` | 最大数据库连接数 | 单实例默认 `10` |
 | `DB_POOL_MIN_IDLE` | 最小空闲连接数 | 默认 `2` |
 | `JAVA_OPTS` | JVM 容器内存策略 | 默认值适合小型实例 |

@@ -52,14 +52,12 @@ public class SystemUpdateService {
     private final String releaseApi;
     private final Path requestDirectory;
     private final Path statusDirectory;
-    private final boolean updateEnabled;
 
     @Autowired
     public SystemUpdateService(ObjectMapper objectMapper,
                                ObjectProvider<BuildProperties> buildPropertiesProvider,
                                @Value("${app.version:}") String configuredVersion,
                                @Value("${app.update.release-api:" + RELEASE_API + "}") String releaseApi,
-                                @Value("${app.update.enabled:false}") boolean updateEnabled,
                                @Value("${app.update.request-dir:/app/update/request}") String updateRequestDir,
                                @Value("${app.update.status-dir:/app/update/status}") String updateStatusDir) {
         this(objectMapper,
@@ -67,23 +65,16 @@ public class SystemUpdateService {
                 releaseApi,
                 Path.of(updateRequestDir),
                 Path.of(updateStatusDir),
-                 updateEnabled,
                 HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
     }
 
     SystemUpdateService(ObjectMapper objectMapper, String currentVersion, String releaseApi,
                         Path requestDirectory, Path statusDirectory, HttpClient httpClient) {
-        this(objectMapper, currentVersion, releaseApi, requestDirectory, statusDirectory, true, httpClient);
-    }
-
-    SystemUpdateService(ObjectMapper objectMapper, String currentVersion, String releaseApi,
-                        Path requestDirectory, Path statusDirectory, boolean updateEnabled, HttpClient httpClient) {
         this.objectMapper = objectMapper;
         this.currentVersion = normalizeVersion(currentVersion);
         this.releaseApi = releaseApi;
         this.requestDirectory = requestDirectory;
         this.statusDirectory = statusDirectory;
-        this.updateEnabled = updateEnabled;
         this.httpClient = httpClient;
     }
 
@@ -91,16 +82,11 @@ public class SystemUpdateService {
         return currentVersion;
     }
 
-    public boolean updateEnabled() {
-        return updateEnabled;
-    }
-
     public VersionInfoRespDTO checkUpdate() {
         VersionInfoRespDTO result = new VersionInfoRespDTO();
         result.setCurrentVersion(currentVersion);
         result.setLatestVersion(currentVersion);
         result.setHasUpdate(false);
-        result.setUpdateEnabled(updateEnabled);
         if (releaseApi == null || releaseApi.isBlank()) {
             return result;
         }
@@ -156,9 +142,6 @@ public class SystemUpdateService {
         if (Boolean.TRUE.equals(currentStatus.get("active"))) {
             return currentStatus;
         }
-        if (!updateEnabled) {
-            throw new IllegalStateException("在线更新尚未由宿主机管理员启用");
-        }
 
         VersionInfoRespDTO version = checkUpdate();
         if (!Boolean.TRUE.equals(version.getHasUpdate())) {
@@ -197,7 +180,6 @@ public class SystemUpdateService {
         boolean requestPending = Files.exists(requestPath, LinkOption.NOFOLLOW_LINKS);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("available", available);
-        result.put("enabled", updateEnabled);
         result.put("requestPending", requestPending);
         try {
             Map<String, Object> status = readJson(statusDirectory.resolve("status.json"));
