@@ -1,0 +1,9 @@
+{
+  "releaseTag": "v2.0.28",
+  "hostContractRequired": true,
+  "minimumAgentVersion": 5,
+  "manual": {
+    "reason": "更新代理升级到版本 5：应用容器切换时会保护已存在的 Compose 网络，避免共享 MySQL 网络因配置哈希差异被错误删除。",
+    "instructions": "agent v4 及以上会在网页更新请求中自动下载、验签并安装 v2.0.28 的 host package，然后由 agent v5 继续同一更新任务；旧于 v4 的代理需要先完成一次经过验签的 host package bootstrap。"
+  }
+}
